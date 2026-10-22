@@ -1,0 +1,6 @@
+athletiq:
+  security:
+    jwt:
+      secret: test-secret-key-only-for-tests-0123456789abcdef
+  cors:
+    allowed-origins: http://localhost:4200
