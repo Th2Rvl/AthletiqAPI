@@ -7,9 +7,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.athletiq.auth.dto.ForgotPasswordRequest;
+import com.athletiq.auth.dto.ForgotPasswordResponse;
 import com.athletiq.auth.dto.LoginRequest;
 import com.athletiq.auth.dto.LoginResponse;
+import com.athletiq.auth.dto.RegisterCoachRequest;
 import com.athletiq.common.exception.InvalidCredentialsException;
+import com.athletiq.common.exception.InvalidFieldException;
 import com.athletiq.support.WebSecurityTestConfig;
 import com.athletiq.user.Role;
 import com.athletiq.user.dto.UserResponse;
@@ -29,12 +33,17 @@ import org.springframework.test.web.servlet.MockMvc;
 class AuthControllerTest {
 
     private static final String LOGIN = "/api/v1/auth/login";
+    private static final String REGISTER = "/api/v1/auth/register";
+    private static final String FORGOT = "/api/v1/auth/password/forgot";
+    private static final String RESET = "/api/v1/auth/password/reset";
 
     @Autowired
     private MockMvc mockMvc;
 
     @MockitoBean
     private AuthService authService;
+    @MockitoBean
+    private PasswordResetService passwordResetService;
 
     @Test
     void logsInWithoutToken() throws Exception {
@@ -72,5 +81,89 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.errors.length()").value(2));
         verifyNoInteractions(authService);
+    }
+
+    // ---------------------------------------------------------------- inscription (US06)
+
+    @Test
+    void registersACoachWithoutTokenAndConnectsIt() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(authService.register(any(RegisterCoachRequest.class))).thenReturn(LoginResponse.bearer("jwt", 900,
+                new UserResponse(id, "claire.martin@club.fr", "Claire", "Martin", Role.COACH)));
+
+        mockMvc.perform(post(REGISTER).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"claire.martin@club.fr\",\"password\":\"motdepasse123\","
+                                + "\"firstName\":\"Claire\",\"lastName\":\"Martin\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.accessToken").value("jwt"))
+                .andExpect(jsonPath("$.user.role").value("COACH"))
+                .andExpect(jsonPath("$.user.passwordHash").doesNotExist());
+    }
+
+    @Test
+    void refusesARegistrationWithAnAlreadyUsedEmail() throws Exception {
+        when(authService.register(any(RegisterCoachRequest.class)))
+                .thenThrow(new com.athletiq.common.exception.BusinessRuleException("EMAIL_ALREADY_EXISTS",
+                        "Un compte existe déjà avec cet e-mail", "email"));
+
+        mockMvc.perform(post(REGISTER).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"claire.martin@club.fr\",\"password\":\"motdepasse123\","
+                                + "\"firstName\":\"Claire\",\"lastName\":\"Martin\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("EMAIL_ALREADY_EXISTS"))
+                .andExpect(jsonPath("$.field").value("email"));
+    }
+
+    @Test
+    void validatesTheRegistration() throws Exception {
+        mockMvc.perform(post(REGISTER).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"pas-un-email\",\"password\":\"court\",\"firstName\":\"\",\"lastName\":\"Martin\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors.length()").value(3));
+        verifyNoInteractions(authService);
+    }
+
+    // ---------------------------------------------------------------- mot de passe oublié (US08)
+
+    @Test
+    void acceptsAForgottenPasswordRequest() throws Exception {
+        when(passwordResetService.requestReset(any(ForgotPasswordRequest.class)))
+                .thenReturn(ForgotPasswordResponse.accepted("jeton"));
+
+        mockMvc.perform(post(FORGOT).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"coach@club.fr\"}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.accepted").value(true))
+                .andExpect(jsonPath("$.resetToken").value("jeton"));
+    }
+
+    @Test
+    void validatesTheForgottenPasswordRequest() throws Exception {
+        mockMvc.perform(post(FORGOT).contentType(MediaType.APPLICATION_JSON).content("{\"email\":\"\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        verifyNoInteractions(passwordResetService);
+    }
+
+    @Test
+    void resetsThePassword() throws Exception {
+        mockMvc.perform(post(RESET).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"jeton\",\"password\":\"nouveaumotdepasse1\","
+                                + "\"passwordConfirmation\":\"nouveaumotdepasse1\"}"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void refusesAnInvalidResetToken() throws Exception {
+        org.mockito.Mockito.doThrow(new InvalidFieldException("RESET_TOKEN_INVALID",
+                "Ce lien de réinitialisation n'est plus valable", "token"))
+                .when(passwordResetService).resetPassword(any());
+
+        mockMvc.perform(post(RESET).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"jeton\",\"password\":\"nouveaumotdepasse1\","
+                                + "\"passwordConfirmation\":\"nouveaumotdepasse1\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("RESET_TOKEN_INVALID"));
     }
 }

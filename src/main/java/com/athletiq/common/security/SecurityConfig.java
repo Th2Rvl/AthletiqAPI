@@ -34,10 +34,15 @@ public class SecurityConfig {
                 .cors(withDefaults())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll()
+                        // Parcours publics : créer un compte, se connecter, réinitialiser son mot de passe.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/register",
+                                "/api/v1/auth/password/forgot", "/api/v1/auth/password/reset").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/api/v1/organisations", "/api/v1/organisations/**").hasRole("ADMIN")
+                        // Profil du coach connecté : à lui et à l'administrateur.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/profile").hasAnyRole("COACH", "ADMIN")
+                        .requestMatchers(HttpMethod.PATCH, "/api/v1/profile").hasAnyRole("COACH", "ADMIN")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter))
