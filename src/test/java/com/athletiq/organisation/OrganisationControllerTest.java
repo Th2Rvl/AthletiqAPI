@@ -351,6 +351,37 @@ class OrganisationControllerTest {
     }
 
     @Test
+    void refusesAnEmptyEmail() throws Exception {
+        mockMvc.perform(post(BASE + "/" + ORG_ID + "/invitations").with(as(Role.ADMIN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"   \"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors", hasSize(1)))
+                .andExpect(jsonPath("$.errors[0].field").value("email"))
+                .andExpect(jsonPath("$.errors[0].message").value("L'e-mail est obligatoire"));
+        verifyNoInteractions(organisationService);
+    }
+
+    @Test
+    void refusesAnEmailLongerThan254Characters() throws Exception {
+        // Adresse syntaxiquement valide (partie locale de 64, labels de 63) mais de 259 caractères :
+        // seule la contrainte de longueur doit échouer.
+        String email = "a".repeat(64) + "@" + "b".repeat(63) + "." + "c".repeat(63) + "." + "d".repeat(63) + ".fr";
+        org.assertj.core.api.Assertions.assertThat(email).hasSizeGreaterThan(254);
+
+        mockMvc.perform(post(BASE + "/" + ORG_ID + "/invitations").with(as(Role.ADMIN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors", hasSize(1)))
+                .andExpect(jsonPath("$.errors[0].field").value("email"))
+                .andExpect(jsonPath("$.errors[0].message").value("L'e-mail ne doit pas dépasser 254 caractères"));
+        verifyNoInteractions(organisationService);
+    }
+
+    @Test
     void returns409WhenTheAccountIsNotACoach() throws Exception {
         when(organisationService.inviteCoach(ORG_ID, "lucas.girard@athlete.fr"))
                 .thenThrow(OrganisationErrors.accountNotCoach());

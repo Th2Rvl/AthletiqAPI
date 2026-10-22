@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
@@ -61,8 +62,19 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ProblemDetail> handleDataIntegrity(DataIntegrityViolationException ex,
                                                              HttpServletRequest request) {
-        log.warn("Contrainte de base de données non traduite sur {}", request.getRequestURI(), ex);
+        // Le message du driver contient la valeur en conflit (ex. un e-mail) : on ne logge que la contrainte.
+        log.warn("Contrainte de base de données non traduite sur {} : {}", request.getRequestURI(),
+                constraintName(ex));
         return problem(HttpStatus.CONFLICT, ErrorCodes.DATA_CONFLICT, "Conflit de données", request);
+    }
+
+    private static String constraintName(DataIntegrityViolationException ex) {
+        for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ConstraintViolationException violation && violation.getConstraintName() != null) {
+                return violation.getConstraintName();
+            }
+        }
+        return "inconnue";
     }
 
     @ExceptionHandler(Exception.class)

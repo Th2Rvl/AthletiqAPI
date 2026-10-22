@@ -267,6 +267,31 @@ class OrganisationIntegrationTest {
     }
 
     @Test
+    void listsCoachesSortedByLastNameThenFirstName() throws Exception {
+        String admin = login(ADMIN_EMAIL, ADMIN_PASSWORD);
+        Organisation organisation = organisationRepository.saveAndFlush(Organisation.builder().name("Club").build());
+        // Insérés volontairement dans le désordre
+        for (String[] coach : new String[][] {
+                {"zoe.martin@club.fr", "Zoé", "Martin"},
+                {"bruno.bernard@club.fr", "Bruno", "Bernard"},
+                {"alice.martin@club.fr", "Alice", "Martin"},
+                {"camille.dubois@club.fr", "Camille", "Dubois"},
+                {"anne.bernard@club.fr", "Anne", "Bernard"}}) {
+            User user = userService.create(coach[0], COACH_PASSWORD, coach[1], coach[2], Role.COACH);
+            coachRepository.saveAndFlush(membership(organisation, user));
+        }
+
+        mockMvc.perform(get("/api/v1/organisations/" + organisation.getId() + "/coaches")
+                        .param("sort", "email,desc")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].lastName")
+                        .value(org.hamcrest.Matchers.contains("Bernard", "Bernard", "Dubois", "Martin", "Martin")))
+                .andExpect(jsonPath("$.content[*].firstName")
+                        .value(org.hamcrest.Matchers.contains("Anne", "Bruno", "Camille", "Alice", "Zoé")));
+    }
+
+    @Test
     void refusesAWrongPassword() throws Exception {
         mockMvc.perform(json(post("/api/v1/auth/login"), null,
                         "{\"email\":\"" + ADMIN_EMAIL + "\",\"password\":\"mauvais-mot-de-passe\"}"))

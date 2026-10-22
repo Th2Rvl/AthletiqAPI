@@ -25,7 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Données de démonstration, uniquement en profil {@code dev}. Idempotent : un compte est ignoré si son
- * e-mail existe déjà, une organisation si son nom existe déjà.
+ * e-mail existe déjà, une organisation si son nom existe déjà. Le mot de passe des comptes de démo
+ * vient de {@code ATHLETIQ_DEV_DEMO_PASSWORD}, sans valeur par défaut : s'il est absent, rien n'est créé.
+ * Ainsi, une application démarrée par erreur avec le profil dev par défaut n'ouvre aucun compte connu.
  *
  * <p>Les organisations sont écrites par les repositories et non par {@code OrganisationService} :
  * au démarrage il n'y a pas d'utilisateur connecté, donc pas d'admin pour passer {@code assertAdmin()}.
@@ -65,7 +67,7 @@ public class DevDataSeeder implements ApplicationRunner {
                          OrganisationCoachRepository coachRepository,
                          OrganisationInvitationRepository invitationRepository,
                          Clock clock,
-                         @Value("${athletiq.dev.demo-password}") String demoPassword) {
+                         @Value("${athletiq.dev.demo-password:}") String demoPassword) {
         this.userService = userService;
         this.organisationRepository = organisationRepository;
         this.coachRepository = coachRepository;
@@ -77,6 +79,10 @@ public class DevDataSeeder implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
+        if (demoPassword == null || demoPassword.isBlank()) {
+            log.warn("ATHLETIQ_DEV_DEMO_PASSWORD absent : aucune donnée de démonstration n'est créée");
+            return;
+        }
         Map<String, Organisation> created = new HashMap<>();
         createOrganisation(RENNES, "Club d'athlétisme rennais : sprint, demi-fond et épreuves combinées.", created);
         createOrganisation(NANTES, "Section piste et cross de la métropole nantaise.", created);
