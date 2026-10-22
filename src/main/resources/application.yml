@@ -11,6 +11,20 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100
+        # Sérialise les pages au format stable { content, page: { size, number, totalElements, totalPages } }.
+        serialization-mode: via-dto
+  mvc:
+    problemdetails:
+      enabled: true
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -27,10 +41,15 @@ server:
 athletiq:
   security:
     jwt:
-      # Clé HS256 d'au moins 256 bits, fournie uniquement par variable d'environnement.
-      secret: ${JWT_SECRET}
+      # Clé HS256 d'au moins 32 octets (256 bits), fournie uniquement par variable d'environnement.
+      secret: ${ATHLETIQ_JWT_SECRET}
       access-token-ttl: 15m
       refresh-token-ttl: 7d
+      issuer: athletiq-api
+  # Premier administrateur, créé au démarrage s'il n'existe pas (laisser vide pour ne rien créer).
+  admin:
+    email: ${ATHLETIQ_ADMIN_EMAIL:}
+    password: ${ATHLETIQ_ADMIN_PASSWORD:}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
 

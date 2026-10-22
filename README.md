@@ -7,7 +7,7 @@ API REST d'Athletiq, consommée par l'app web coach et l'app mobile athlète.
 ## Démarrer
 
 ```bash
-cp .env.example .env               # renseigner JWT_SECRET (openssl rand -base64 32)
+cp .env.example .env               # renseigner ATHLETIQ_JWT_SECRET (openssl rand -base64 32) et l'admin
 docker compose up -d               # MySQL de développement
 ./mvnw spring-boot:run             # profil dev par défaut, http://localhost:8080
 ./mvnw test                        # nécessite Docker (Testcontainers)
