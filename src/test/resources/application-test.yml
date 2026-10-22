@@ -4,3 +4,7 @@ athletiq:
       secret: test-secret-key-only-for-tests-0123456789abcdef
   cors:
     allowed-origins: http://localhost:4200
+  # Admin de test, créé par AdminBootstrap dans les tests d'intégration.
+  admin:
+    email: admin@athletiq.test
+    password: test-admin-password
