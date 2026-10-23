@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.athletiq.athlete.AthleteLinkService;
 import com.athletiq.common.exception.ForbiddenActionException;
 import com.athletiq.common.exception.ResourceNotFoundException;
+import com.athletiq.exercise.ExerciseOwnershipService;
 import com.athletiq.group.GroupOwnershipService;
 import java.util.List;
 import java.util.Set;
@@ -26,7 +27,9 @@ class AccessGuardTest {
     private final CurrentUser currentUser = new CurrentUser();
     private final AthleteLinkService athleteLinkService = mock(AthleteLinkService.class);
     private final GroupOwnershipService groupOwnershipService = mock(GroupOwnershipService.class);
-    private final AccessGuard accessGuard = new AccessGuard(currentUser, athleteLinkService, groupOwnershipService);
+    private final ExerciseOwnershipService exerciseOwnershipService = mock(ExerciseOwnershipService.class);
+    private final AccessGuard accessGuard = new AccessGuard(currentUser, athleteLinkService, groupOwnershipService,
+            exerciseOwnershipService);
 
     @AfterEach
     void clear() {
@@ -139,6 +142,18 @@ class AccessGuardTest {
         assertThatThrownBy(() -> accessGuard.assertInvitationOwner(UUID.randomUUID()))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .extracting("code").isEqualTo("INVITATION_NOT_FOUND");
+    }
+
+    @Test
+    void assertExerciseOwnerAnswers404ForTheExerciseOfAnotherCoach() {
+        UUID coachId = authenticateAs("COACH");
+        UUID mine = UUID.randomUUID();
+        when(exerciseOwnershipService.isOwnedBy(mine, coachId)).thenReturn(true);
+
+        assertThatCode(() -> accessGuard.assertExerciseOwner(mine)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> accessGuard.assertExerciseOwner(UUID.randomUUID()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .extracting("code").isEqualTo("EXERCISE_NOT_FOUND");
     }
 
     @Test

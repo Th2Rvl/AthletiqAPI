@@ -4,6 +4,8 @@ import com.athletiq.athlete.AthleteErrors;
 import com.athletiq.athlete.AthleteLinkService;
 import com.athletiq.common.exception.ErrorCodes;
 import com.athletiq.common.exception.ForbiddenActionException;
+import com.athletiq.exercise.ExerciseErrors;
+import com.athletiq.exercise.ExerciseOwnershipService;
 import com.athletiq.group.GroupErrors;
 import com.athletiq.group.GroupOwnershipService;
 import com.athletiq.user.Role;
@@ -32,6 +34,7 @@ public class AccessGuard {
     private final CurrentUser currentUser;
     private final AthleteLinkService athleteLinkService;
     private final GroupOwnershipService groupOwnershipService;
+    private final ExerciseOwnershipService exerciseOwnershipService;
 
     /** L'utilisateur courant doit être administrateur de la plateforme. */
     public void assertAdmin() {
@@ -82,6 +85,14 @@ public class AccessGuard {
         assertCoach();
         if (!groupOwnershipService.isOwnedBy(groupId, currentUser.id())) {
             throw GroupErrors.groupNotFound();
+        }
+    }
+
+    /** L'exercice doit appartenir au coach courant, sinon 404 {@code EXERCISE_NOT_FOUND}. */
+    public void assertExerciseOwner(UUID exerciseId) {
+        assertCoach();
+        if (!exerciseOwnershipService.isOwnedBy(exerciseId, currentUser.id())) {
+            throw ExerciseErrors.exerciseNotFound();
         }
     }
 
