@@ -1,24 +1,18 @@
 package com.athletiq.auth;
 
-import com.athletiq.common.exception.BusinessRuleException;
 import com.athletiq.common.exception.InvalidFieldException;
 
 /**
- * Codes et messages d'erreur de l'authentification et du compte coach. Le front s'appuie sur
- * les codes : ils ne changent pas quand le libellé s'améliore.
+ * Codes et messages d'erreur propres à l'authentification. Ceux qui concernent le compte
+ * lui-même (e-mail déjà pris) sont dans {@link com.athletiq.user.UserErrors}.
  */
 final class AuthErrors {
 
-    static final String EMAIL_ALREADY_EXISTS = "EMAIL_ALREADY_EXISTS";
     static final String PASSWORD_RULE_VIOLATION = "PASSWORD_RULE_VIOLATION";
     static final String RESET_TOKEN_INVALID = "RESET_TOKEN_INVALID";
     static final String PASSWORD_CONFIRMATION_MISMATCH = "PASSWORD_CONFIRMATION_MISMATCH";
 
     private AuthErrors() {
-    }
-
-    static BusinessRuleException emailAlreadyExists() {
-        return new BusinessRuleException(EMAIL_ALREADY_EXISTS, "Un compte existe déjà avec cet e-mail", "email");
     }
 
     static InvalidFieldException passwordRuleViolation() {

@@ -117,13 +117,12 @@ class AuthServiceTest {
 
     @Test
     void refusesAnAlreadyUsedEmail() {
-        when(userService.create(anyString(), anyString(), anyString(), anyString(), any()))
-                .thenThrow(new BusinessRuleException("EMAIL_ALREADY_EXISTS", "Un compte existe déjà avec cet e-mail",
-                        "email"));
+        when(userService.existsByEmail("claire.martin@club.fr")).thenReturn(true);
 
         assertThatThrownBy(() -> authService.register(
                 new RegisterCoachRequest("claire.martin@club.fr", "motdepasse123", "Claire", "Martin")))
                 .isInstanceOf(BusinessRuleException.class)
                 .hasMessageContaining("existe déjà");
+        verify(userService, never()).create(anyString(), anyString(), anyString(), anyString(), any());
     }
 }

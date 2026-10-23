@@ -42,6 +42,10 @@ public class ProfileService {
         return toResponse(updated);
     }
 
+    /**
+     * Identifiant du compte courant, lu dans le JWT. Le compte est cherché en base : un jeton
+     * valide pour un compte supprimé ne donne accès à rien.
+     */
     private UUID currentUserId() {
         UUID userId = currentUser.id();
         if (userService.findById(userId).isEmpty()) {
@@ -54,6 +58,7 @@ public class ProfileService {
         return userService.findById(currentUserId())
                 .orElseThrow(() -> new ResourceNotFoundException(PROFILE_NOT_FOUND, "Ce profil n'existe pas"));
     }
+
     private CoachProfileResponse toResponse(User user) {
         return new CoachProfileResponse(user.getId(), user.getEmail(), user.getFirstName(), user.getLastName(),
                 user.getRole(), user.getCreatedAt());

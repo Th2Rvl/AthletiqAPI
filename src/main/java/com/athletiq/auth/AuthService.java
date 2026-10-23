@@ -8,6 +8,7 @@ import com.athletiq.common.security.JwtTokenService;
 import com.athletiq.user.Role;
 import com.athletiq.user.User;
 import com.athletiq.user.UserMapper;
+import com.athletiq.user.UserErrors;
 import com.athletiq.user.UserService;
 import java.util.Optional;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -64,6 +65,9 @@ public class AuthService {
     public LoginResponse register(RegisterCoachRequest request) {
         if (!PasswordPolicy.isValid(request.password())) {
             throw AuthErrors.passwordRuleViolation();
+        }
+        if (userService.existsByEmail(request.email())) {
+            throw UserErrors.emailAlreadyExists();
         }
         User created = userService.create(request.email(), request.password(), request.firstName(),
                 request.lastName(), Role.COACH);

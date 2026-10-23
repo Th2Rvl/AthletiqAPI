@@ -33,6 +33,12 @@ public class UserService {
         return userRepository.existsByEmail(EmailNormalizer.normalize(email));
     }
 
+    /** Vrai si l'e-mail est déjà porté par un compte autre que celui-ci. */
+    @Transactional(readOnly = true)
+    public boolean existsByEmailOtherThan(String email, UUID userId) {
+        return userRepository.existsByEmailAndIdNot(EmailNormalizer.normalize(email), userId);
+    }
+
     /** Crée un compte. Le mot de passe en clair est hashé en BCrypt et n'est jamais conservé. */
     @Transactional
     public User create(String email, String rawPassword, String firstName, String lastName, Role role) {
@@ -66,6 +72,9 @@ public class UserService {
     public User updateProfile(UUID userId, String email, String firstName, String lastName) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalStateException("Compte introuvable : " + userId));
+        if (email != null && existsByEmailOtherThan(email, userId)) {
+            throw UserErrors.emailAlreadyExists();
+        }
         if (email != null) {
             user.setEmail(EmailNormalizer.normalize(email));
         }
