@@ -9,6 +9,8 @@ import com.athletiq.exercise.ExerciseOwnershipService;
 import com.athletiq.group.GroupErrors;
 import com.athletiq.group.GroupOwnershipService;
 import com.athletiq.user.Role;
+import com.athletiq.workout.WorkoutErrors;
+import com.athletiq.workout.WorkoutOwnershipService;
 import java.util.Collection;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,7 @@ public class AccessGuard {
     private final AthleteLinkService athleteLinkService;
     private final GroupOwnershipService groupOwnershipService;
     private final ExerciseOwnershipService exerciseOwnershipService;
+    private final WorkoutOwnershipService workoutOwnershipService;
 
     /** L'utilisateur courant doit être administrateur de la plateforme. */
     public void assertAdmin() {
@@ -93,6 +96,25 @@ public class AccessGuard {
         assertCoach();
         if (!exerciseOwnershipService.isOwnedBy(exerciseId, currentUser.id())) {
             throw ExerciseErrors.exerciseNotFound();
+        }
+    }
+
+    /**
+     * Chacun de ces exercices doit appartenir au coach courant (une requête pour tout le lot, doublons
+     * permis), sinon 404 {@code EXERCISE_NOT_FOUND} pour le lot entier, sans dire lequel.
+     */
+    public void assertExercisesOwner(Collection<UUID> exerciseIds) {
+        assertCoach();
+        if (!exerciseOwnershipService.ownsAll(currentUser.id(), exerciseIds)) {
+            throw ExerciseErrors.exerciseNotFound();
+        }
+    }
+
+    /** La séance doit appartenir au coach courant, sinon 404 {@code WORKOUT_NOT_FOUND}. */
+    public void assertWorkoutOwner(UUID workoutId) {
+        assertCoach();
+        if (!workoutOwnershipService.isOwnedBy(workoutId, currentUser.id())) {
+            throw WorkoutErrors.workoutNotFound();
         }
     }
 

@@ -50,6 +50,8 @@ class ExerciseServiceTest {
     private AccessGuard accessGuard;
     @Mock
     private CurrentUser currentUser;
+    @Mock
+    private ExerciseUsage exerciseUsage;
 
     private ExerciseService service;
     private User coach;
@@ -57,7 +59,7 @@ class ExerciseServiceTest {
     @BeforeEach
     void setUp() {
         service = new ExerciseService(exerciseRepository, new ExerciseMapperImpl(), userService, accessGuard,
-                currentUser);
+                currentUser, exerciseUsage);
         coach = user("coach@club.fr", Role.COACH);
     }
 
@@ -294,7 +296,57 @@ class ExerciseServiceTest {
         service.delete(squat.getId());
 
         verify(exerciseRepository).delete(squat);
+        verify(exerciseRepository).flush();
         verify(accessGuard).assertExerciseOwner(squat.getId());
+    }
+
+    @Test
+    void anExerciseUsedInWorkoutsCannotBeDeletedAndTheCountIsGiven() {
+        when(currentUser.id()).thenReturn(coach.getId());
+        Exercise squat = exercise("Squat");
+        when(exerciseRepository.findByIdAndCoachId(squat.getId(), coach.getId())).thenReturn(Optional.of(squat));
+        when(exerciseUsage.countWorkoutsUsing(squat.getId())).thenReturn(3L);
+
+        Throwable thrown = catchThrowable(() -> service.delete(squat.getId()));
+
+        assertDomainError(thrown, BusinessRuleException.class, ExerciseErrors.EXERCISE_IN_USE);
+        DomainException error = (DomainException) thrown;
+        assertThat(error.getProperties()).containsEntry(ExerciseErrors.WORKOUT_COUNT, 3L);
+        assertThat(error.getDetail()).isEqualTo("Cet exercice est utilisé dans 3 séances");
+        assertThat(error.getField()).isNull();
+        verify(exerciseRepository, never()).delete(any());
+    }
+
+    @Test
+    void theRestrictForeignKeyIsTranslatedIntoExerciseInUseWhenAWorkoutAppearsMeanwhile() {
+        when(currentUser.id()).thenReturn(coach.getId());
+        Exercise squat = exercise("Squat");
+        when(exerciseRepository.findByIdAndCoachId(squat.getId(), coach.getId())).thenReturn(Optional.of(squat));
+        when(exerciseUsage.countWorkoutsUsing(squat.getId())).thenReturn(0L, 1L);
+        doThrow(new DataIntegrityViolationException("fk", new SQLIntegrityConstraintViolationException(
+                "Cannot delete or update a parent row: a foreign key constraint fails "
+                        + "(CONSTRAINT `fk_workout_exercise_exercise` FOREIGN KEY ...)")))
+                .when(exerciseRepository).flush();
+
+        Throwable thrown = catchThrowable(() -> service.delete(squat.getId()));
+
+        assertDomainError(thrown, BusinessRuleException.class, ExerciseErrors.EXERCISE_IN_USE);
+        assertThat(((DomainException) thrown).getProperties()).containsEntry(ExerciseErrors.WORKOUT_COUNT, 1L);
+        assertThat(((DomainException) thrown).getDetail()).isEqualTo("Cet exercice est utilisé dans 1 séance");
+    }
+
+    @Test
+    void findOwnedReturnsTheExercisesOfTheCoachByIdInOneQuery() {
+        when(currentUser.id()).thenReturn(coach.getId());
+        Exercise squat = exercise("Squat");
+        Exercise bench = exercise("Développé couché");
+        when(exerciseRepository.findAllByCoachIdAndIdIn(coach.getId(), List.of(squat.getId(), bench.getId())))
+                .thenReturn(List.of(squat, bench));
+
+        var owned = service.findOwned(List.of(squat.getId(), bench.getId(), squat.getId()));
+
+        assertThat(owned).containsOnlyKeys(squat.getId(), bench.getId());
+        assertThat(service.findOwned(List.of())).isEmpty();
     }
 
     @Test
