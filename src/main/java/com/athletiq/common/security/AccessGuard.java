@@ -8,6 +8,8 @@ import com.athletiq.exercise.ExerciseErrors;
 import com.athletiq.exercise.ExerciseOwnershipService;
 import com.athletiq.group.GroupErrors;
 import com.athletiq.group.GroupOwnershipService;
+import com.athletiq.planning.PlannedSessionOwnershipService;
+import com.athletiq.planning.PlanningErrors;
 import com.athletiq.user.Role;
 import com.athletiq.workout.WorkoutErrors;
 import com.athletiq.workout.WorkoutOwnershipService;
@@ -38,6 +40,7 @@ public class AccessGuard {
     private final GroupOwnershipService groupOwnershipService;
     private final ExerciseOwnershipService exerciseOwnershipService;
     private final WorkoutOwnershipService workoutOwnershipService;
+    private final PlannedSessionOwnershipService plannedSessionOwnershipService;
 
     /** L'utilisateur courant doit être administrateur de la plateforme. */
     public void assertAdmin() {
@@ -115,6 +118,17 @@ public class AccessGuard {
         assertCoach();
         if (!workoutOwnershipService.isOwnedBy(workoutId, currentUser.id())) {
             throw WorkoutErrors.workoutNotFound();
+        }
+    }
+
+    /**
+     * La séance planifiée doit appartenir au coach courant, qui suit toujours son athlète (RM1, RM2), sinon
+     * 404 {@code PLANNED_SESSION_NOT_FOUND} : une séance d'un athlète au lien clos devient invisible.
+     */
+    public void assertPlannedSessionOwner(UUID plannedSessionId) {
+        assertCoach();
+        if (!plannedSessionOwnershipService.isOwnedBy(plannedSessionId, currentUser.id())) {
+            throw PlanningErrors.plannedSessionNotFound();
         }
     }
 

@@ -216,13 +216,14 @@ class ExerciseControllerTest {
 
     @Test
     void anExerciseUsedInWorkoutsAnswers409WithTheWorkoutCount() throws Exception {
-        doThrow(ExerciseErrors.exerciseInUse(3)).when(exerciseService).delete(EXERCISE_ID);
+        doThrow(ExerciseErrors.exerciseInUse(3, 2)).when(exerciseService).delete(EXERCISE_ID);
 
         mockMvc.perform(delete(BASE + "/" + EXERCISE_ID).with(as(Role.COACH)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("EXERCISE_IN_USE"))
                 .andExpect(jsonPath("$.workoutCount").value(3))
-                .andExpect(jsonPath("$.detail").value("Cet exercice est utilisé dans 3 séances"))
+                .andExpect(jsonPath("$.plannedSessionCount").value(2))
+                .andExpect(jsonPath("$.detail").value("Cet exercice est utilisé dans 3 séances et 2 séances planifiées"))
                 .andExpect(jsonPath("$.field").doesNotExist());
     }
 }

@@ -2,6 +2,7 @@ package com.athletiq.group;
 
 import com.athletiq.common.security.AccessGuard;
 import com.athletiq.common.security.CurrentUser;
+import com.athletiq.group.dto.GroupMemberRef;
 import com.athletiq.group.dto.GroupMemberResponse;
 import com.athletiq.group.dto.GroupResponse;
 import com.athletiq.user.UserService;
@@ -39,6 +40,16 @@ public class GroupMemberService {
         return memberRepository.findPageByGroupId(groupId,
                         PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()))
                 .map(mapper::toMemberResponse);
+    }
+
+    /**
+     * Tous les membres actuels du groupe, triés par nom puis prénom, non paginé : la planification (#6)
+     * crée une séance par membre présent au moment de planifier (Q3).
+     */
+    @Transactional(readOnly = true)
+    public List<GroupMemberRef> listAllMembers(UUID groupId) {
+        accessGuard.assertGroupOwner(groupId);
+        return memberRepository.findAllRefsByGroupId(groupId);
     }
 
     /**

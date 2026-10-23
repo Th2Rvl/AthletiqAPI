@@ -43,10 +43,12 @@ public class SecurityConfig {
                         // Profil du coach connecté : à lui et à l'administrateur.
                         .requestMatchers(HttpMethod.GET, "/api/v1/profile").hasAnyRole("COACH", "ADMIN")
                         .requestMatchers(HttpMethod.PATCH, "/api/v1/profile").hasAnyRole("COACH", "ADMIN")
-                        // Invitations, athlètes suivis et groupes : au coach uniquement (P11).
+                        // Invitations, athlètes suivis, groupes et séances planifiées : au coach uniquement
+                        // (P11, RM12 de #6 ; la lecture athlète viendra avec #9 sous /api/v1/me).
                         .requestMatchers("/api/v1/invitations", "/api/v1/invitations/**",
                                 "/api/v1/athletes", "/api/v1/athletes/**",
-                                "/api/v1/groups", "/api/v1/groups/**").hasRole("COACH")
+                                "/api/v1/groups", "/api/v1/groups/**",
+                                "/api/v1/planned-sessions/**").hasRole("COACH")
                         // Saisie d'un code d'invitation : à l'athlète uniquement.
                         .requestMatchers(HttpMethod.POST, "/api/v1/me/coaches").hasRole("ATHLETE")
                         .anyRequest().authenticated())

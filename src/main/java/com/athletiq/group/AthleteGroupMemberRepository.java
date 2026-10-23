@@ -1,5 +1,6 @@
 package com.athletiq.group;
 
+import com.athletiq.group.dto.GroupMemberRef;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +24,16 @@ public interface AthleteGroupMemberRepository extends JpaRepository<AthleteGroup
             """,
             countQuery = "select count(m) from AthleteGroupMember m where m.group.id = :groupId")
     Page<AthleteGroupMember> findPageByGroupId(@Param("groupId") UUID groupId, Pageable pageable);
+
+    /** Tous les membres d'un groupe, triés par nom puis prénom, sans pagination (planification, #6). */
+    @Query("""
+            select new com.athletiq.group.dto.GroupMemberRef(a.id, a.firstName, a.lastName)
+            from AthleteGroupMember m
+            join m.athlete a
+            where m.group.id = :groupId
+            order by a.lastName asc, a.firstName asc, a.id asc
+            """)
+    List<GroupMemberRef> findAllRefsByGroupId(@Param("groupId") UUID groupId);
 
     @Query("""
             select m.athlete.id from AthleteGroupMember m
