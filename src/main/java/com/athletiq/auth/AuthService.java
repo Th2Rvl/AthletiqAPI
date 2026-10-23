@@ -2,10 +2,13 @@ package com.athletiq.auth;
 
 import com.athletiq.auth.dto.LoginRequest;
 import com.athletiq.auth.dto.LoginResponse;
+import com.athletiq.auth.dto.RegisterCoachRequest;
 import com.athletiq.common.exception.InvalidCredentialsException;
 import com.athletiq.common.security.JwtTokenService;
+import com.athletiq.user.Role;
 import com.athletiq.user.User;
 import com.athletiq.user.UserMapper;
+import com.athletiq.user.UserErrors;
 import com.athletiq.user.UserService;
 import java.util.Optional;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -49,5 +52,27 @@ public class AuthService {
         String token = jwtTokenService.createAccessToken(authenticated.getId(), authenticated.getRole());
         return LoginResponse.bearer(token, jwtTokenService.accessTokenTtlSeconds(),
                 userMapper.toResponse(authenticated));
+    }
+
+    /**
+     * Crée un compte coach (US06) et le connecte immédiatement.
+     *
+     * <p>Le rôle est fixé ici, jamais lu dans la requête : un compte créé depuis le web est un
+     * compte coach (RM3). La robustesse du mot de passe est revérifiée côté service, l'annotation
+     * du DTO n'étant qu'une première barrière.
+     */
+    @Transactional
+    public LoginResponse register(RegisterCoachRequest request) {
+        if (!PasswordPolicy.isValid(request.password())) {
+            throw AuthErrors.passwordRuleViolation();
+        }
+        if (userService.existsByEmail(request.email())) {
+            throw UserErrors.emailAlreadyExists();
+        }
+        User created = userService.create(request.email(), request.password(), request.firstName(),
+                request.lastName(), Role.COACH);
+        String token = jwtTokenService.createAccessToken(created.getId(), created.getRole());
+        return LoginResponse.bearer(token, jwtTokenService.accessTokenTtlSeconds(),
+                userMapper.toResponse(created));
     }
 }

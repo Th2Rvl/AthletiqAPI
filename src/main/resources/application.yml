@@ -46,6 +46,11 @@ athletiq:
       access-token-ttl: 15m
       refresh-token-ttl: 7d
       issuer: athletiq-api
+    reset-token:
+      # Sans service d'e-mail, le jeton brut n'est renvoyé par l'API que hors production.
+      # En production, il n'est jamais exposé et le parcours « mot de passe oublié » reste à brancher.
+      reset-token-exposed: ${ATHLETIQ_RESET_TOKEN_EXPOSED:false}
+      ttl: 1h
   # Premier administrateur, créé au démarrage s'il n'existe pas (laisser vide pour ne rien créer).
   admin:
     email: ${ATHLETIQ_ADMIN_EMAIL:}

@@ -2,6 +2,9 @@ athletiq:
   security:
     jwt:
       secret: test-secret-key-only-for-tests-0123456789abcdef
+    reset-token:
+      reset-token-exposed: true
+      ttl: 1h
   cors:
     allowed-origins: http://localhost:4200
   # Admin de test, créé par AdminBootstrap dans les tests d'intégration.

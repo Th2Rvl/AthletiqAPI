@@ -4,20 +4,26 @@ import static com.athletiq.support.TestEntities.user;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+
 import com.athletiq.auth.dto.LoginRequest;
+import com.athletiq.auth.dto.RegisterCoachRequest;
 import com.athletiq.auth.dto.LoginResponse;
+import com.athletiq.common.exception.BusinessRuleException;
 import com.athletiq.common.exception.InvalidCredentialsException;
+import com.athletiq.common.exception.InvalidFieldException;
 import com.athletiq.common.security.JwtTokenService;
 import com.athletiq.user.Role;
 import com.athletiq.user.User;
 import com.athletiq.user.UserMapperImpl;
 import com.athletiq.user.UserService;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -81,5 +87,42 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.login(new LoginRequest("inconnu@club.fr", "peu-importe")))
                 .isInstanceOf(InvalidCredentialsException.class);
         verify(passwordEncoder).matches(eq("peu-importe"), eq(DUMMY_HASH));
+    }
+
+    // ---------------------------------------------------------------- inscription (US06)
+
+    @Test
+    void createsACoachAccountAndConnectsIt() {
+        when(userService.create("claire.martin@club.fr", "motdepasse123", "Claire", "Martin", Role.COACH))
+                .thenReturn(user("claire.martin@club.fr", Role.COACH));
+        when(jwtTokenService.createAccessToken(any(UUID.class), eq(Role.COACH))).thenReturn("jwt");
+        when(jwtTokenService.accessTokenTtlSeconds()).thenReturn(900L);
+
+        LoginResponse response = authService.register(
+                new RegisterCoachRequest(" Claire.Martin@Club.FR ", "motdepasse123", " Claire ", " Martin "));
+
+        assertThat(response.accessToken()).isEqualTo("jwt");
+        assertThat(response.user().role()).isEqualTo(Role.COACH);
+        assertThat(response.user().email()).isEqualTo("claire.martin@club.fr");
+        verify(userService).create("claire.martin@club.fr", "motdepasse123", "Claire", "Martin", Role.COACH);
+    }
+
+    @Test
+    void refusesAnAccountWithAWeakPassword() {
+        assertThatThrownBy(() -> authService.register(
+                new RegisterCoachRequest("claire.martin@club.fr", "court", "Claire", "Martin")))
+                .isInstanceOf(InvalidFieldException.class);
+        verify(userService, never()).create(anyString(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void refusesAnAlreadyUsedEmail() {
+        when(userService.existsByEmail("claire.martin@club.fr")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.register(
+                new RegisterCoachRequest("claire.martin@club.fr", "motdepasse123", "Claire", "Martin")))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("existe déjà");
+        verify(userService, never()).create(anyString(), anyString(), anyString(), anyString(), any());
     }
 }
