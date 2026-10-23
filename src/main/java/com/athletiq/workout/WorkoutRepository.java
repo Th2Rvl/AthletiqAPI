@@ -18,6 +18,9 @@ public interface WorkoutRepository extends JpaRepository<Workout, UUID> {
 
     boolean existsByIdAndCoachId(UUID id, UUID coachId);
 
+    /** Données de démonstration (profil dev) : la séance de ce nom, si elle existe déjà. */
+    Optional<Workout> findByCoachIdAndName(UUID coachId, String name);
+
     /**
      * Détail, première des deux requêtes : la séance (filtrée par coach), ses exercices de séance et
      * l'exercice de bibliothèque de chacun. Les séries viennent de
