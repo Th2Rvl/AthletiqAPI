@@ -51,6 +51,12 @@ athletiq:
       # En production, il n'est jamais exposé et le parcours « mot de passe oublié » reste à brancher.
       reset-token-exposed: ${ATHLETIQ_RESET_TOKEN_EXPOSED:false}
       ttl: 1h
+  # Codes d'invitation des athlètes (#3) : clés de 32 octets en base64, uniquement par variables
+  # d'environnement. Sans elles, l'application refuse de démarrer (seuls dev et test ont une valeur par défaut).
+  invitation:
+    encryption-key: ${ATHLETIQ_INVITATION_ENCRYPTION_KEY:}
+    hmac-key: ${ATHLETIQ_INVITATION_HMAC_KEY:}
+    ttl: P7D
   # Premier administrateur, créé au démarrage s'il n'existe pas (laisser vide pour ne rien créer).
   admin:
     email: ${ATHLETIQ_ADMIN_EMAIL:}

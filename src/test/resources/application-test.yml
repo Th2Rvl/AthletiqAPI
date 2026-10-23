@@ -5,6 +5,10 @@ athletiq:
     reset-token:
       reset-token-exposed: true
       ttl: 1h
+  # Clés de test uniquement.
+  invitation:
+    encryption-key: MT2QGc4KFnLDmHwi+JdRndLrFd+0JxaYiF3eXY/nOaU=
+    hmac-key: nRCPjJPnJe28QkKwXOOXvXcEv4cuQId0HzDDJapvwN4=
   cors:
     allowed-origins: http://localhost:4200
   # Admin de test, créé par AdminBootstrap dans les tests d'intégration.
