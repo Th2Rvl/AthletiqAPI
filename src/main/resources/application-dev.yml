@@ -14,6 +14,10 @@ athletiq:
       # En dev, le jeton de réinitialisation est renvoyé dans la réponse : aucun service d'e-mail
       # n'existe encore, le parcours doit rester testable de bout en bout.
       reset-token-exposed: true
+  # Clés de DÉVELOPPEMENT uniquement (publiques puisque versionnées) : ne jamais les réutiliser ailleurs.
+  invitation:
+    encryption-key: ${ATHLETIQ_INVITATION_ENCRYPTION_KEY:7tCpXGP7i6cYH/n4OFmw1QDwLaJzADW1l85qbmb5Ni0=}
+    hmac-key: ${ATHLETIQ_INVITATION_HMAC_KEY:Cpd4K/yccKgpVHJr5aFz6gY5F4Vf9gX620yUvzsObcI=}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:4200,http://localhost:8100}
 

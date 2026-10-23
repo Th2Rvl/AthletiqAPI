@@ -28,6 +28,15 @@ public class UserService {
         return userRepository.findById(id);
     }
 
+    /**
+     * Référence vers un compte dont l'existence est déjà établie (ex. utilisateur du JWT), pour poser
+     * une clé étrangère sans recharger le compte.
+     */
+    @Transactional(readOnly = true)
+    public User getReference(UUID id) {
+        return userRepository.getReferenceById(id);
+    }
+
     @Transactional(readOnly = true)
     public boolean existsByEmail(String email) {
         return userRepository.existsByEmail(EmailNormalizer.normalize(email));
