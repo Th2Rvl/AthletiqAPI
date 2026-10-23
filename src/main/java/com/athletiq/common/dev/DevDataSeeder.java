@@ -6,6 +6,9 @@ import com.athletiq.athlete.CoachInvitation;
 import com.athletiq.athlete.CoachInvitationRepository;
 import com.athletiq.athlete.InvitationCodeCipher;
 import com.athletiq.athlete.InvitationProperties;
+import com.athletiq.exercise.Exercise;
+import com.athletiq.exercise.ExerciseRepository;
+import com.athletiq.exercise.MuscleGroup;
 import com.athletiq.group.AthleteGroup;
 import com.athletiq.group.AthleteGroupMember;
 import com.athletiq.group.AthleteGroupMemberRepository;
@@ -17,15 +20,28 @@ import com.athletiq.organisation.OrganisationCoachRepository;
 import com.athletiq.organisation.OrganisationInvitation;
 import com.athletiq.organisation.OrganisationInvitationRepository;
 import com.athletiq.organisation.OrganisationRepository;
+import com.athletiq.planning.PlannedSession;
+import com.athletiq.planning.PlannedSessionRepository;
+import com.athletiq.planning.PlanningClock;
+import com.athletiq.planning.SessionSnapshot;
+import com.athletiq.planning.SessionSnapshotRepository;
 import com.athletiq.user.Role;
 import com.athletiq.user.User;
 import com.athletiq.user.UserService;
+import com.athletiq.workout.PlannedSet;
+import com.athletiq.workout.Workout;
+import com.athletiq.workout.WorkoutExercise;
+import com.athletiq.workout.WorkoutMapper;
+import com.athletiq.workout.WorkoutRepository;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
@@ -44,6 +60,11 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>Suivi des athlètes (#3) : le coach de démo {@code coach@club.fr} suit six athlètes répartis en
  * deux groupes, Lucas Girard est aussi suivi par Claire Martin (plusieurs coachs, RM2), et une
  * invitation en attente porte le code connu {@value #DEMO_INVITATION_CODE} (dev uniquement).
+ *
+ * <p>Planification (#6) : le coach de démo a une petite bibliothèque (exercices, deux séances) et, s'il n'a
+ * encore rien planifié, une séance individuelle à venir pour Lucas, une seconde le même jour (plusieurs
+ * séances par jour, Q1), une séance passée (verrouillée), et une planification du groupe « Sprint »
+ * (instantané partagé par ses membres).
  *
  * <p>Les organisations sont écrites par les repositories et non par {@code OrganisationService} :
  * au démarrage il n'y a pas d'utilisateur connecté, donc pas d'admin pour passer {@code assertAdmin()}.
@@ -106,6 +127,12 @@ public class DevDataSeeder implements ApplicationRunner {
     private final AthleteGroupMemberRepository groupMemberRepository;
     private final InvitationCodeCipher invitationCodeCipher;
     private final InvitationProperties invitationProperties;
+    private final ExerciseRepository exerciseRepository;
+    private final WorkoutRepository workoutRepository;
+    private final WorkoutMapper workoutMapper;
+    private final PlannedSessionRepository plannedSessionRepository;
+    private final SessionSnapshotRepository snapshotRepository;
+    private final PlanningClock planningClock;
     private final Clock clock;
     private final String demoPassword;
 
@@ -119,6 +146,12 @@ public class DevDataSeeder implements ApplicationRunner {
                          AthleteGroupMemberRepository groupMemberRepository,
                          InvitationCodeCipher invitationCodeCipher,
                          InvitationProperties invitationProperties,
+                         ExerciseRepository exerciseRepository,
+                         WorkoutRepository workoutRepository,
+                         WorkoutMapper workoutMapper,
+                         PlannedSessionRepository plannedSessionRepository,
+                         SessionSnapshotRepository snapshotRepository,
+                         PlanningClock planningClock,
                          Clock clock,
                          @Value("${athletiq.dev.demo-password:}") String demoPassword) {
         this.userService = userService;
@@ -131,6 +164,12 @@ public class DevDataSeeder implements ApplicationRunner {
         this.groupMemberRepository = groupMemberRepository;
         this.invitationCodeCipher = invitationCodeCipher;
         this.invitationProperties = invitationProperties;
+        this.exerciseRepository = exerciseRepository;
+        this.workoutRepository = workoutRepository;
+        this.workoutMapper = workoutMapper;
+        this.plannedSessionRepository = plannedSessionRepository;
+        this.snapshotRepository = snapshotRepository;
+        this.planningClock = planningClock;
         this.clock = clock;
         this.demoPassword = demoPassword;
     }
@@ -231,6 +270,94 @@ public class DevDataSeeder implements ApplicationRunner {
                         .codeHash(hash)
                         .expiresAt(now.plus(invitationProperties.ttl()))
                         .build()));
+
+        seedPlanning(coach, users);
+    }
+
+    /** Bibliothèque et planning de démonstration du coach de démo ; le planning n'est créé qu'une fois. */
+    private void seedPlanning(User coach, Map<String, User> users) {
+        Exercise bench = exercise(coach, "Développé couché", MuscleGroup.PECTORAUX, "Barre");
+        Exercise row = exercise(coach, "Rowing barre", MuscleGroup.DOS, "Barre");
+        Exercise squat = exercise(coach, "Squat", MuscleGroup.QUADRICEPS, "Barre");
+        Exercise plank = exercise(coach, "Gainage", MuscleGroup.ABDOMINAUX, null);
+        Workout upper = workout(coach, "Haut du corps A", "Échauffement 10 min, puis travail en force.",
+                List.of(exercise(bench, "Tempo 3-1-1", set(8, "60.0", 90), set(8, "60.0", 90), set(6, "65.0", 120)),
+                        exercise(row, null, set(10, "50.0", 90), set(10, "50.0", 90))));
+        Workout lower = workout(coach, "Bas du corps A", null,
+                List.of(exercise(squat, null, set(5, "80.0", 150), set(5, "80.0", 150), set(5, "80.0", 150)),
+                        exercise(plank, "45 s par série", set(1, null, 60), set(1, null, 60))));
+
+        if (plannedSessionRepository.existsByCoachId(coach.getId())) {
+            return;
+        }
+        LocalDate today = planningClock.today();
+        User lucas = users.get("lucas.girard@athlete.fr");
+        if (lucas != null) {
+            plan(coach, lucas, today.plusDays(2), upper);
+            plan(coach, lucas, today.plusDays(2), lower);
+            plan(coach, lucas, today.minusDays(5), lower);
+        }
+        groupRepository.findByCoachIdAndName(coach.getId(), "Sprint").ifPresent(group -> {
+            SessionSnapshot shared = snapshotRepository.save(
+                    SessionSnapshot.copyOf(coach, workoutMapper.toResponse(upper)));
+            GROUPS.get("Sprint").stream().map(users::get).filter(Objects::nonNull)
+                    .forEach(athlete -> plannedSessionRepository.save(PlannedSession.builder()
+                            .coach(coach)
+                            .athlete(athlete)
+                            .scheduledDate(today.plusDays(4))
+                            .snapshot(shared)
+                            .sourceWorkoutId(upper.getId())
+                            .groupId(group.getId())
+                            .build()));
+        });
+        log.info("Données de démonstration : planning du coach {} créé", DEMO_COACH);
+    }
+
+    private Exercise exercise(User coach, String name, MuscleGroup muscleGroup, String equipment) {
+        return exerciseRepository.findByCoachIdAndName(coach.getId(), name)
+                .orElseGet(() -> exerciseRepository.save(Exercise.builder()
+                        .coach(coach)
+                        .name(name)
+                        .muscleGroup(muscleGroup)
+                        .equipment(equipment)
+                        .build()));
+    }
+
+    private Workout workout(User coach, String name, String description, List<WorkoutExercise> exercises) {
+        return workoutRepository.findByCoachIdAndName(coach.getId(), name).orElseGet(() -> {
+            Workout workout = Workout.builder().coach(coach).name(name).description(description).build();
+            exercises.forEach(workout::addExercise);
+            return workoutRepository.save(workout);
+        });
+    }
+
+    private static WorkoutExercise exercise(Exercise exercise, String note, PlannedSet... sets) {
+        WorkoutExercise workoutExercise = WorkoutExercise.builder().exercise(exercise).note(note).build();
+        for (PlannedSet set : sets) {
+            workoutExercise.addSet(set);
+        }
+        return workoutExercise;
+    }
+
+    private static PlannedSet set(int reps, String loadKg, Integer restSeconds) {
+        return PlannedSet.builder()
+                .reps(reps)
+                .loadKg(loadKg == null ? null : new BigDecimal(loadKg))
+                .restSeconds(restSeconds)
+                .build();
+    }
+
+    /** Une planification individuelle : un instantané neuf, comme {@code PlanningService.planForAthlete}. */
+    private void plan(User coach, User athlete, LocalDate date, Workout workout) {
+        SessionSnapshot snapshot = snapshotRepository.save(
+                SessionSnapshot.copyOf(coach, workoutMapper.toResponse(workout)));
+        plannedSessionRepository.save(PlannedSession.builder()
+                .coach(coach)
+                .athlete(athlete)
+                .scheduledDate(date)
+                .snapshot(snapshot)
+                .sourceWorkoutId(workout.getId())
+                .build());
     }
 
     private void createOrganisation(String name, String description, Map<String, Organisation> created) {

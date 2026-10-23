@@ -21,6 +21,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.ServletWebRequest;
@@ -115,6 +116,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 ? mismatch.getName()
                 : ex.getPropertyName();
         return invalidParameter(name, headers, request);
+    }
+
+    /** Paramètre obligatoire absent (ex. {@code from} d'un calendrier) : même erreur qu'un paramètre mal formé. */
+    @Override
+    protected ResponseEntity<Object> handleMissingServletRequestParameter(
+            @NonNull MissingServletRequestParameterException ex,
+            @NonNull HttpHeaders headers,
+            @NonNull HttpStatusCode status,
+            @NonNull WebRequest request) {
+        return invalidParameter(ex.getParameterName(), headers, request);
     }
 
     /** Contrainte Bean Validation posée sur un {@code @RequestParam} (ex. {@code q} trop long). */

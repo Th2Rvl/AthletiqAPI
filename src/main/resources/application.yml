@@ -67,6 +67,9 @@ athletiq:
     password: ${ATHLETIQ_ADMIN_PASSWORD:}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
+  # Planification (#6, Q12) : « aujourd'hui » est calculé dans ce fuseau unique, identique web et mobile.
+  planning:
+    zone: Europe/Paris
 
 springdoc:
   api-docs:

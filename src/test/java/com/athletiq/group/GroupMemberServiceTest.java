@@ -18,6 +18,7 @@ import com.athletiq.common.exception.DomainException;
 import com.athletiq.common.exception.ResourceNotFoundException;
 import com.athletiq.common.security.AccessGuard;
 import com.athletiq.common.security.CurrentUser;
+import com.athletiq.group.dto.GroupMemberRef;
 import com.athletiq.group.dto.GroupResponse;
 import com.athletiq.user.Role;
 import com.athletiq.user.User;
@@ -135,6 +136,26 @@ class GroupMemberServiceTest {
         Throwable thrown = catchThrowable(() -> service.list(sprint.getId(), org.springframework.data.domain.PageRequest.of(0, 20)));
 
         assertThat(((DomainException) thrown).getCode()).isEqualTo(GroupErrors.GROUP_NOT_FOUND);
+        verifyNoInteractions(memberRepository);
+    }
+
+    @Test
+    void listAllMembersChecksTheOwnerFirst() {
+        List<GroupMemberRef> members = List.of(new GroupMemberRef(UUID.randomUUID(), "Lucas", "Girard"));
+        when(memberRepository.findAllRefsByGroupId(sprint.getId())).thenReturn(members);
+
+        assertThat(service.listAllMembers(sprint.getId())).isEqualTo(members);
+        verify(accessGuard).assertGroupOwner(sprint.getId());
+    }
+
+    @Test
+    void listAllMembersOfTheGroupOfAnotherCoachAnswers404() {
+        UUID foreign = UUID.randomUUID();
+        doThrow(GroupErrors.groupNotFound()).when(accessGuard).assertGroupOwner(foreign);
+
+        Throwable thrown = catchThrowable(() -> service.listAllMembers(foreign));
+
+        assertThat(thrown).isInstanceOf(ResourceNotFoundException.class);
         verifyNoInteractions(memberRepository);
     }
 }

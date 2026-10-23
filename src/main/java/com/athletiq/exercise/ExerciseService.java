@@ -31,6 +31,7 @@ public class ExerciseService {
 
     static final String UK_EXERCISE_COACH_NAME = "uk_exercise_coach_name";
     static final String FK_WORKOUT_EXERCISE_EXERCISE = "fk_workout_exercise_exercise";
+    static final String FK_SESSION_SNAPSHOT_EXERCISE_EXERCISE = "fk_session_snapshot_exercise_exercise";
 
     /** Caractère d'échappement des motifs LIKE (ni {@code \} ni un joker). */
     static final char LIKE_ESCAPE = '!';
@@ -41,6 +42,7 @@ public class ExerciseService {
     private final AccessGuard accessGuard;
     private final CurrentUser currentUser;
     private final ExerciseUsage exerciseUsage;
+    private final PlannedExerciseUsage plannedExerciseUsage;
 
     /**
      * Exercices du coach, triés par nom. {@code q} cherche dans le nom sans tenir compte de la casse ;
@@ -99,26 +101,33 @@ public class ExerciseService {
     }
 
     /**
-     * Un exercice utilisé dans au moins une séance du coach ne se supprime pas (RM9) : 409
-     * {@code EXERCISE_IN_USE} avec le nombre de séances. La clé étrangère {@code RESTRICT} protège en
-     * dernier recours (séance enregistrée entre le comptage et la suppression) : même erreur.
+     * Un exercice utilisé dans au moins une séance du coach (RM9) ou une séance planifiée, passée comprise
+     * (Q11 de #6), ne se supprime pas : 409 {@code EXERCISE_IN_USE} avec les deux compteurs. Les clés
+     * étrangères {@code RESTRICT} protègent en dernier recours (écriture entre le comptage et la
+     * suppression) : même erreur, compteurs recalculés, au moins 1 du côté de la clé violée.
      */
     @Transactional
     public void delete(UUID exerciseId) {
         accessGuard.assertExerciseOwner(exerciseId);
         Exercise exercise = findOwnExercise(exerciseId);
         long workoutCount = exerciseUsage.countWorkoutsUsing(exerciseId);
-        if (workoutCount > 0) {
-            throw ExerciseErrors.exerciseInUse(workoutCount);
+        long plannedSessionCount = plannedExerciseUsage.countPlannedSessionsUsing(exerciseId);
+        if (workoutCount + plannedSessionCount > 0) {
+            throw ExerciseErrors.exerciseInUse(workoutCount, plannedSessionCount);
         }
         try {
             exerciseRepository.delete(exercise);
             exerciseRepository.flush();
         } catch (DataIntegrityViolationException ex) {
-            if (mentions(ex, FK_WORKOUT_EXERCISE_EXERCISE)) {
-                throw ExerciseErrors.exerciseInUse(Math.max(1, exerciseUsage.countWorkoutsUsing(exerciseId)));
+            boolean workoutSide = mentions(ex, FK_WORKOUT_EXERCISE_EXERCISE);
+            boolean plannedSide = mentions(ex, FK_SESSION_SNAPSHOT_EXERCISE_EXERCISE);
+            if (!workoutSide && !plannedSide) {
+                throw ex;
             }
-            throw ex;
+            long workouts = exerciseUsage.countWorkoutsUsing(exerciseId);
+            long plannedSessions = plannedExerciseUsage.countPlannedSessionsUsing(exerciseId);
+            throw ExerciseErrors.exerciseInUse(workoutSide ? Math.max(1, workouts) : workouts,
+                    plannedSide ? Math.max(1, plannedSessions) : plannedSessions);
         }
     }
 

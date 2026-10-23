@@ -1,7 +1,10 @@
 package com.athletiq.user;
 
+import java.util.Collection;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -35,6 +38,16 @@ public class UserService {
     @Transactional(readOnly = true)
     public User getReference(UUID id) {
         return userRepository.getReferenceById(id);
+    }
+
+    /** Prénom et nom de ces comptes, indexés par id, en une requête. Un id inconnu est absent de la map. */
+    @Transactional(readOnly = true)
+    public Map<UUID, UserName> findNames(Collection<UUID> ids) {
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        return userRepository.findAllById(ids.stream().distinct().toList()).stream()
+                .collect(Collectors.toMap(User::getId, user -> new UserName(user.getFirstName(), user.getLastName())));
     }
 
     @Transactional(readOnly = true)

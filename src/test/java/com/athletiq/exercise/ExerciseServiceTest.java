@@ -52,6 +52,8 @@ class ExerciseServiceTest {
     private CurrentUser currentUser;
     @Mock
     private ExerciseUsage exerciseUsage;
+    @Mock
+    private PlannedExerciseUsage plannedExerciseUsage;
 
     private ExerciseService service;
     private User coach;
@@ -59,7 +61,7 @@ class ExerciseServiceTest {
     @BeforeEach
     void setUp() {
         service = new ExerciseService(exerciseRepository, new ExerciseMapperImpl(), userService, accessGuard,
-                currentUser, exerciseUsage);
+                currentUser, exerciseUsage, plannedExerciseUsage);
         coach = user("coach@club.fr", Role.COACH);
     }
 
@@ -311,7 +313,8 @@ class ExerciseServiceTest {
 
         assertDomainError(thrown, BusinessRuleException.class, ExerciseErrors.EXERCISE_IN_USE);
         DomainException error = (DomainException) thrown;
-        assertThat(error.getProperties()).containsEntry(ExerciseErrors.WORKOUT_COUNT, 3L);
+        assertThat(error.getProperties()).containsEntry(ExerciseErrors.WORKOUT_COUNT, 3L)
+                .containsEntry(ExerciseErrors.PLANNED_SESSION_COUNT, 0L);
         assertThat(error.getDetail()).isEqualTo("Cet exercice est utilisé dans 3 séances");
         assertThat(error.getField()).isNull();
         verify(exerciseRepository, never()).delete(any());
@@ -333,6 +336,56 @@ class ExerciseServiceTest {
         assertDomainError(thrown, BusinessRuleException.class, ExerciseErrors.EXERCISE_IN_USE);
         assertThat(((DomainException) thrown).getProperties()).containsEntry(ExerciseErrors.WORKOUT_COUNT, 1L);
         assertThat(((DomainException) thrown).getDetail()).isEqualTo("Cet exercice est utilisé dans 1 séance");
+    }
+
+    @Test
+    void anExerciseUsedOnlyInPlannedSessionsCannotBeDeleted() {
+        when(currentUser.id()).thenReturn(coach.getId());
+        Exercise squat = exercise("Squat");
+        when(exerciseRepository.findByIdAndCoachId(squat.getId(), coach.getId())).thenReturn(Optional.of(squat));
+        when(plannedExerciseUsage.countPlannedSessionsUsing(squat.getId())).thenReturn(1L);
+
+        Throwable thrown = catchThrowable(() -> service.delete(squat.getId()));
+
+        assertDomainError(thrown, BusinessRuleException.class, ExerciseErrors.EXERCISE_IN_USE);
+        DomainException error = (DomainException) thrown;
+        assertThat(error.getProperties()).containsEntry(ExerciseErrors.WORKOUT_COUNT, 0L)
+                .containsEntry(ExerciseErrors.PLANNED_SESSION_COUNT, 1L);
+        assertThat(error.getDetail()).isEqualTo("Cet exercice est utilisé dans 1 séance planifiée");
+        verify(exerciseRepository, never()).delete(any());
+    }
+
+    @Test
+    void bothCountsAreGivenWhenTheExerciseIsInWorkoutsAndPlannedSessions() {
+        when(currentUser.id()).thenReturn(coach.getId());
+        Exercise squat = exercise("Squat");
+        when(exerciseRepository.findByIdAndCoachId(squat.getId(), coach.getId())).thenReturn(Optional.of(squat));
+        when(exerciseUsage.countWorkoutsUsing(squat.getId())).thenReturn(2L);
+        when(plannedExerciseUsage.countPlannedSessionsUsing(squat.getId())).thenReturn(3L);
+
+        Throwable thrown = catchThrowable(() -> service.delete(squat.getId()));
+
+        assertThat(((DomainException) thrown).getDetail())
+                .isEqualTo("Cet exercice est utilisé dans 2 séances et 3 séances planifiées");
+        assertThat(((DomainException) thrown).getProperties()).containsEntry(ExerciseErrors.WORKOUT_COUNT, 2L)
+                .containsEntry(ExerciseErrors.PLANNED_SESSION_COUNT, 3L);
+    }
+
+    @Test
+    void theSnapshotRestrictForeignKeyIsTranslatedWithAtLeastOnePlannedSession() {
+        when(currentUser.id()).thenReturn(coach.getId());
+        Exercise squat = exercise("Squat");
+        when(exerciseRepository.findByIdAndCoachId(squat.getId(), coach.getId())).thenReturn(Optional.of(squat));
+        doThrow(new DataIntegrityViolationException("fk", new SQLIntegrityConstraintViolationException(
+                "Cannot delete or update a parent row: a foreign key constraint fails "
+                        + "(CONSTRAINT `fk_session_snapshot_exercise_exercise` FOREIGN KEY ...)")))
+                .when(exerciseRepository).flush();
+
+        Throwable thrown = catchThrowable(() -> service.delete(squat.getId()));
+
+        assertDomainError(thrown, BusinessRuleException.class, ExerciseErrors.EXERCISE_IN_USE);
+        assertThat(((DomainException) thrown).getProperties()).containsEntry(ExerciseErrors.WORKOUT_COUNT, 0L)
+                .containsEntry(ExerciseErrors.PLANNED_SESSION_COUNT, 1L);
     }
 
     @Test

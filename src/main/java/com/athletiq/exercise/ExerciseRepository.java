@@ -19,6 +19,9 @@ public interface ExerciseRepository extends JpaRepository<Exercise, UUID> {
 
     boolean existsByIdAndCoachId(UUID id, UUID coachId);
 
+    /** Données de démonstration (profil dev) : l'exercice de ce nom, s'il existe déjà. */
+    Optional<Exercise> findByCoachIdAndName(UUID coachId, String name);
+
     long countByCoachIdAndIdIn(UUID coachId, Collection<UUID> ids);
 
     /** Exercices de ce coach parmi ces identifiants (ceux d'un autre coach sont ignorés). */

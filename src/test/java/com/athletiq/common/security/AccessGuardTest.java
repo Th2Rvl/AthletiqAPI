@@ -12,6 +12,7 @@ import com.athletiq.common.exception.ForbiddenActionException;
 import com.athletiq.common.exception.ResourceNotFoundException;
 import com.athletiq.exercise.ExerciseOwnershipService;
 import com.athletiq.group.GroupOwnershipService;
+import com.athletiq.planning.PlannedSessionOwnershipService;
 import com.athletiq.workout.WorkoutOwnershipService;
 import java.util.List;
 import java.util.Set;
@@ -30,8 +31,10 @@ class AccessGuardTest {
     private final GroupOwnershipService groupOwnershipService = mock(GroupOwnershipService.class);
     private final ExerciseOwnershipService exerciseOwnershipService = mock(ExerciseOwnershipService.class);
     private final WorkoutOwnershipService workoutOwnershipService = mock(WorkoutOwnershipService.class);
+    private final PlannedSessionOwnershipService plannedSessionOwnershipService =
+            mock(PlannedSessionOwnershipService.class);
     private final AccessGuard accessGuard = new AccessGuard(currentUser, athleteLinkService, groupOwnershipService,
-            exerciseOwnershipService, workoutOwnershipService);
+            exerciseOwnershipService, workoutOwnershipService, plannedSessionOwnershipService);
 
     @AfterEach
     void clear() {
@@ -182,6 +185,27 @@ class AccessGuardTest {
         assertThatThrownBy(() -> accessGuard.assertWorkoutOwner(UUID.randomUUID()))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .extracting("code").isEqualTo("WORKOUT_NOT_FOUND");
+    }
+
+    @Test
+    void assertPlannedSessionOwnerAnswers404ForThePlannedSessionOfAnotherCoachOrAClosedLink() {
+        UUID coachId = authenticateAs("COACH");
+        UUID mine = UUID.randomUUID();
+        when(plannedSessionOwnershipService.isOwnedBy(mine, coachId)).thenReturn(true);
+
+        assertThatCode(() -> accessGuard.assertPlannedSessionOwner(mine)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> accessGuard.assertPlannedSessionOwner(UUID.randomUUID()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .extracting("code").isEqualTo("PLANNED_SESSION_NOT_FOUND");
+    }
+
+    @Test
+    void plannedSessionChecksRefuseAnAthleteWith403BeforeAnyLookup() {
+        authenticateAs("ATHLETE");
+
+        assertThatThrownBy(() -> accessGuard.assertPlannedSessionOwner(UUID.randomUUID()))
+                .isInstanceOf(ForbiddenActionException.class);
+        verifyNoInteractions(plannedSessionOwnershipService);
     }
 
     @Test
