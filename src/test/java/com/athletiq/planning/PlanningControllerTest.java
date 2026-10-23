@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -295,6 +296,16 @@ class PlanningControllerTest {
         mockMvc.perform(get(ATHLETE_SESSIONS + "/upcoming-count").with(as(Role.COACH)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.count").value(4));
+    }
+
+    @Test
+    void theUpcomingCountOfAnAthleteNotFollowedAnswers404() throws Exception {
+        when(planningService.upcomingCount(ATHLETE_ID)).thenThrow(AthleteErrors.athleteNotFound());
+
+        mockMvc.perform(get(ATHLETE_SESSIONS + "/upcoming-count").with(as(Role.COACH)))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value(AthleteErrors.ATHLETE_NOT_FOUND));
     }
 
     // ---------------------------------------------------------------- US25 détail, déplacer, annuler

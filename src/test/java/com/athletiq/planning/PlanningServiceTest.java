@@ -445,6 +445,16 @@ class PlanningServiceTest {
         verify(accessGuard).assertCoachOfAthlete(athleteId);
     }
 
+    @Test
+    void theUpcomingCountOfAnAthleteNotFollowedAnswers404() {
+        doThrow(AthleteErrors.athleteNotFound()).when(accessGuard).assertCoachOfAthlete(athleteId);
+
+        Throwable thrown = catchThrowable(() -> service.upcomingCount(athleteId));
+
+        assertDomainError(thrown, ResourceNotFoundException.class, AthleteErrors.ATHLETE_NOT_FOUND);
+        verifyNoInteractions(plannedSessionRepository);
+    }
+
     // ---------------------------------------------------------------- détail, déplacement, annulation
 
     @Test
