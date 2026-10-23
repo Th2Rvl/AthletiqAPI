@@ -22,6 +22,10 @@ spring:
         max-page-size: 100
         # Sérialise les pages au format stable { content, page: { size, number, totalElements, totalPages } }.
         serialization-mode: via-dto
+  jackson:
+    deserialization:
+      # Refuse 8.5 là où un entier est attendu (répétitions, repos) au lieu de le tronquer en 8 : 400 MALFORMED_REQUEST.
+      accept-float-as-int: false
   mvc:
     problemdetails:
       enabled: true

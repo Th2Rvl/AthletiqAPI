@@ -12,6 +12,7 @@ import com.athletiq.common.exception.ForbiddenActionException;
 import com.athletiq.common.exception.ResourceNotFoundException;
 import com.athletiq.exercise.ExerciseOwnershipService;
 import com.athletiq.group.GroupOwnershipService;
+import com.athletiq.workout.WorkoutOwnershipService;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -28,8 +29,9 @@ class AccessGuardTest {
     private final AthleteLinkService athleteLinkService = mock(AthleteLinkService.class);
     private final GroupOwnershipService groupOwnershipService = mock(GroupOwnershipService.class);
     private final ExerciseOwnershipService exerciseOwnershipService = mock(ExerciseOwnershipService.class);
+    private final WorkoutOwnershipService workoutOwnershipService = mock(WorkoutOwnershipService.class);
     private final AccessGuard accessGuard = new AccessGuard(currentUser, athleteLinkService, groupOwnershipService,
-            exerciseOwnershipService);
+            exerciseOwnershipService, workoutOwnershipService);
 
     @AfterEach
     void clear() {
@@ -154,6 +156,43 @@ class AccessGuardTest {
         assertThatThrownBy(() -> accessGuard.assertExerciseOwner(UUID.randomUUID()))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .extracting("code").isEqualTo("EXERCISE_NOT_FOUND");
+    }
+
+    @Test
+    void assertExercisesOwnerRefusesTheWholeBatchWith404() {
+        UUID coachId = authenticateAs("COACH");
+        List<UUID> mine = List.of(UUID.randomUUID(), UUID.randomUUID());
+        List<UUID> mixed = List.of(UUID.randomUUID());
+        when(exerciseOwnershipService.ownsAll(coachId, mine)).thenReturn(true);
+        when(exerciseOwnershipService.ownsAll(coachId, mixed)).thenReturn(false);
+
+        assertThatCode(() -> accessGuard.assertExercisesOwner(mine)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> accessGuard.assertExercisesOwner(mixed))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .extracting("code").isEqualTo("EXERCISE_NOT_FOUND");
+    }
+
+    @Test
+    void assertWorkoutOwnerAnswers404ForTheWorkoutOfAnotherCoach() {
+        UUID coachId = authenticateAs("COACH");
+        UUID mine = UUID.randomUUID();
+        when(workoutOwnershipService.isOwnedBy(mine, coachId)).thenReturn(true);
+
+        assertThatCode(() -> accessGuard.assertWorkoutOwner(mine)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> accessGuard.assertWorkoutOwner(UUID.randomUUID()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .extracting("code").isEqualTo("WORKOUT_NOT_FOUND");
+    }
+
+    @Test
+    void workoutChecksRefuseAnAdminWith403BeforeAnyLookup() {
+        authenticateAs("ADMIN");
+
+        assertThatThrownBy(() -> accessGuard.assertWorkoutOwner(UUID.randomUUID()))
+                .isInstanceOf(ForbiddenActionException.class);
+        assertThatThrownBy(() -> accessGuard.assertExercisesOwner(List.of(UUID.randomUUID())))
+                .isInstanceOf(ForbiddenActionException.class);
+        verifyNoInteractions(workoutOwnershipService, exerciseOwnershipService);
     }
 
     @Test

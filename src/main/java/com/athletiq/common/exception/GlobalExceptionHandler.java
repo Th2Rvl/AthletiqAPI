@@ -44,6 +44,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         if (ex.getField() != null) {
             problem.setProperty(ProblemDetails.FIELD, ex.getField());
         }
+        ex.getProperties().forEach(problem::setProperty);
         return ResponseEntity.status(ex.getStatus()).body(problem);
     }
 

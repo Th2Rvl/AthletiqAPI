@@ -1,5 +1,6 @@
 package com.athletiq.exercise;
 
+import java.util.Collection;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,5 +20,18 @@ public class ExerciseOwnershipService {
     @Transactional(readOnly = true)
     public boolean isOwnedBy(UUID exerciseId, UUID coachId) {
         return exerciseRepository.existsByIdAndCoachId(exerciseId, coachId);
+    }
+
+    /**
+     * Vrai si tous ces exercices appartiennent à ce coach, en une seule requête (les doublons sont
+     * permis : un même exercice peut figurer plusieurs fois dans une séance).
+     */
+    @Transactional(readOnly = true)
+    public boolean ownsAll(UUID coachId, Collection<UUID> exerciseIds) {
+        if (exerciseIds.isEmpty()) {
+            return true;
+        }
+        Collection<UUID> distinct = exerciseIds.stream().distinct().toList();
+        return exerciseRepository.countByCoachIdAndIdIn(coachId, distinct) == distinct.size();
     }
 }

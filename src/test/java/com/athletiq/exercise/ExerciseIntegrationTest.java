@@ -39,6 +39,8 @@ class ExerciseIntegrationTest {
 
     @BeforeEach
     void cleanExercises() {
+        // Les séances d'abord : leur clé vers exercise est en RESTRICT.
+        jdbc.update("delete from workout");
         jdbc.update("delete from exercise");
     }
 

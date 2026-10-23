@@ -6,9 +6,13 @@ import com.athletiq.exercise.dto.CreateExerciseRequest;
 import com.athletiq.exercise.dto.ExerciseResponse;
 import com.athletiq.exercise.dto.UpdateExerciseRequest;
 import com.athletiq.user.UserService;
+import java.util.Collection;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -26,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ExerciseService {
 
     static final String UK_EXERCISE_COACH_NAME = "uk_exercise_coach_name";
+    static final String FK_WORKOUT_EXERCISE_EXERCISE = "fk_workout_exercise_exercise";
 
     /** Caractère d'échappement des motifs LIKE (ni {@code \} ni un joker). */
     static final char LIKE_ESCAPE = '!';
@@ -35,6 +40,7 @@ public class ExerciseService {
     private final UserService userService;
     private final AccessGuard accessGuard;
     private final CurrentUser currentUser;
+    private final ExerciseUsage exerciseUsage;
 
     /**
      * Exercices du coach, triés par nom. {@code q} cherche dans le nom sans tenir compte de la casse ;
@@ -93,12 +99,42 @@ public class ExerciseService {
     }
 
     /**
-     * Suppression directe. Le blocage par les séances planifiées viendra avec le ticket des séances.
+     * Un exercice utilisé dans au moins une séance du coach ne se supprime pas (RM9) : 409
+     * {@code EXERCISE_IN_USE} avec le nombre de séances. La clé étrangère {@code RESTRICT} protège en
+     * dernier recours (séance enregistrée entre le comptage et la suppression) : même erreur.
      */
     @Transactional
     public void delete(UUID exerciseId) {
         accessGuard.assertExerciseOwner(exerciseId);
-        exerciseRepository.delete(findOwnExercise(exerciseId));
+        Exercise exercise = findOwnExercise(exerciseId);
+        long workoutCount = exerciseUsage.countWorkoutsUsing(exerciseId);
+        if (workoutCount > 0) {
+            throw ExerciseErrors.exerciseInUse(workoutCount);
+        }
+        try {
+            exerciseRepository.delete(exercise);
+            exerciseRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            if (mentions(ex, FK_WORKOUT_EXERCISE_EXERCISE)) {
+                throw ExerciseErrors.exerciseInUse(Math.max(1, exerciseUsage.countWorkoutsUsing(exerciseId)));
+            }
+            throw ex;
+        }
+    }
+
+    /**
+     * Exercices du coach connecté parmi ces identifiants, indexés par id, en une requête. Pour les
+     * séances, qui y font référence : un id inconnu ou d'un autre coach est simplement absent de la map
+     * (la propriété est vérifiée avant par {@code AccessGuard.assertExercisesOwner}).
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, Exercise> findOwned(Collection<UUID> exerciseIds) {
+        if (exerciseIds.isEmpty()) {
+            return Map.of();
+        }
+        return exerciseRepository.findAllByCoachIdAndIdIn(currentUser.id(), exerciseIds.stream().distinct().toList())
+                .stream()
+                .collect(Collectors.toMap(Exercise::getId, Function.identity()));
     }
 
     // ---------------------------------------------------------------- interne
@@ -114,16 +150,23 @@ public class ExerciseService {
         try {
             return save.get();
         } catch (DataIntegrityViolationException ex) {
-            String message = ex.getMostSpecificCause().getMessage();
-            if (message != null && message.toLowerCase(Locale.ROOT).contains(UK_EXERCISE_COACH_NAME)) {
+            if (mentions(ex, UK_EXERCISE_COACH_NAME)) {
                 throw ExerciseErrors.exerciseNameAlreadyExists();
             }
             throw ex;
         }
     }
 
-    /** {@code %q%} échappé, ou {@code null} si la recherche est vide. */
-    static String likePattern(String query) {
+    private static boolean mentions(DataIntegrityViolationException ex, String constraint) {
+        String message = ex.getMostSpecificCause().getMessage();
+        return message != null && message.toLowerCase(Locale.ROOT).contains(constraint);
+    }
+
+    /**
+     * {@code %q%} échappé (caractère {@link #LIKE_ESCAPE}), ou {@code null} si la recherche est vide.
+     * Public pour que les séances cherchent par nom exactement de la même façon.
+     */
+    public static String likePattern(String query) {
         String stripped = blankToNull(query);
         if (stripped == null) {
             return null;

@@ -1,5 +1,7 @@
 package com.athletiq.exercise;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -16,6 +18,11 @@ public interface ExerciseRepository extends JpaRepository<Exercise, UUID> {
     boolean existsByCoachIdAndNameAndIdNot(UUID coachId, String name, UUID id);
 
     boolean existsByIdAndCoachId(UUID id, UUID coachId);
+
+    long countByCoachIdAndIdIn(UUID coachId, Collection<UUID> ids);
+
+    /** Exercices de ce coach parmi ces identifiants (ceux d'un autre coach sont ignorés). */
+    List<Exercise> findAllByCoachIdAndIdIn(UUID coachId, Collection<UUID> ids);
 
     /** Filtré par coach en base (RM4) : un exercice d'un autre coach n'est jamais renvoyé. */
     Optional<Exercise> findByIdAndCoachId(UUID id, UUID coachId);
