@@ -41,4 +41,26 @@ final class PerformanceMath {
                 .divide(planned, 0, RoundingMode.HALF_UP)
                 .intValueExact();
     }
+
+    /**
+     * Taux de réalisation, {@code réalisées / (réalisées + non faites) × 100} arrondi à l'entier {@code HALF_UP} ;
+     * {@code null} sans séance passée (le front affiche « - »).
+     */
+    static Integer completionRate(long done, long missed) {
+        long past = done + missed;
+        if (past == 0) {
+            return null;
+        }
+        return BigDecimal.valueOf(done).multiply(HUNDRED)
+                .divide(BigDecimal.valueOf(past), 0, RoundingMode.HALF_UP)
+                .intValueExact();
+    }
+
+    /** Moyenne à une décimale {@code HALF_UP} (RPE moyen) ; {@code null} si aucune valeur. */
+    static BigDecimal average(long sum, long count) {
+        if (count == 0) {
+            return null;
+        }
+        return BigDecimal.valueOf(sum).divide(BigDecimal.valueOf(count), 1, RoundingMode.HALF_UP);
+    }
 }

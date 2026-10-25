@@ -15,7 +15,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.athletiq.athlete.AthleteErrors;
 import com.athletiq.common.exception.ErrorCodes;
 import com.athletiq.common.exception.InvalidParameterException;
+import com.athletiq.exercise.ExerciseErrors;
 import com.athletiq.exercise.MuscleGroup;
+import com.athletiq.performance.dto.PerformedExerciseResponse;
+import com.athletiq.performance.dto.PersonalRecord;
+import com.athletiq.performance.dto.PersonalRecordsResponse;
+import com.athletiq.performance.dto.ProgressionPoint;
+import com.athletiq.performance.dto.ProgressionResponse;
 import com.athletiq.performance.dto.ReviewExercise;
 import com.athletiq.performance.dto.ReviewSet;
 import com.athletiq.performance.dto.SessionFeedback;
@@ -68,6 +74,9 @@ class PerformanceControllerTest {
     private static final String TRACKING = ATHLETE + "/tracking";
     private static final String HISTORY = ATHLETE + "/session-history";
     private static final String REVIEW = "/api/v1/planned-sessions/" + SESSION_ID + "/review";
+    private static final String PERFORMED_EXERCISES = ATHLETE + "/performed-exercises";
+    private static final String PROGRESSION = ATHLETE + "/exercises/" + EXERCISE_ID + "/progression";
+    private static final String RECORDS = ATHLETE + "/personal-records";
 
     @Autowired
     private MockMvc mockMvc;
@@ -79,7 +88,10 @@ class PerformanceControllerTest {
         return Stream.of(
                 Arguments.of(HttpMethod.GET, TRACKING),
                 Arguments.of(HttpMethod.GET, HISTORY),
-                Arguments.of(HttpMethod.GET, REVIEW));
+                Arguments.of(HttpMethod.GET, REVIEW),
+                Arguments.of(HttpMethod.GET, PERFORMED_EXERCISES),
+                Arguments.of(HttpMethod.GET, PROGRESSION),
+                Arguments.of(HttpMethod.GET, RECORDS));
     }
 
     @ParameterizedTest(name = "{0} {1}")
@@ -263,5 +275,103 @@ class PerformanceControllerTest {
         mockMvc.perform(get("/api/v1/planned-sessions/pas-un-uuid/review").with(as(Role.COACH)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(ErrorCodes.INVALID_PARAMETER));
+    }
+
+    // ---------------------------------------------------------------- US30 exercices réalisés et progression
+
+    @Test
+    void thePerformedExercisesAnswerAList() throws Exception {
+        when(performanceService.performedExercises(ATHLETE_ID)).thenReturn(List.of(
+                new PerformedExerciseResponse(EXERCISE_ID, "Squat", MuscleGroup.QUADRICEPS, 6, DATE)));
+
+        mockMvc.perform(get(PERFORMED_EXERCISES).with(as(Role.COACH)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].exerciseId").value(EXERCISE_ID.toString()))
+                .andExpect(jsonPath("$[0].exerciseName").value("Squat"))
+                .andExpect(jsonPath("$[0].muscleGroup").value("QUADRICEPS"))
+                .andExpect(jsonPath("$[0].sessionCount").value(6))
+                .andExpect(jsonPath("$[0].lastPerformedOn").value("2026-11-03"));
+    }
+
+    @Test
+    void theProgressionDefaultsToTwelveWeeksAndAnswersThePoints() throws Exception {
+        when(performanceService.progression(ATHLETE_ID, EXERCISE_ID, 12)).thenReturn(new ProgressionResponse(
+                ATHLETE_ID, EXERCISE_ID, "Squat", MuscleGroup.QUADRICEPS, false, 12, TODAY.minusDays(84), TODAY,
+                List.of(new ProgressionPoint(SESSION_ID, DATE, new BigDecimal("110.0"), 5,
+                        new BigDecimal("1330.0")))));
+
+        mockMvc.perform(get(PROGRESSION).with(as(Role.COACH)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.exerciseName").value("Squat"))
+                .andExpect(jsonPath("$.bodyweight").value(false))
+                .andExpect(jsonPath("$.weeks").value(12))
+                .andExpect(jsonPath("$.from").value("2026-08-13"))
+                .andExpect(jsonPath("$.today").value("2026-11-05"))
+                .andExpect(jsonPath("$.points[0].plannedSessionId").value(SESSION_ID.toString()))
+                .andExpect(jsonPath("$.points[0].date").value("2026-11-03"))
+                .andExpect(jsonPath("$.points[0].maxLoadKg").value(110.0))
+                .andExpect(jsonPath("$.points[0].maxReps").value(5))
+                .andExpect(jsonPath("$.points[0].volumeKg").value(1330.0));
+    }
+
+    @Test
+    void theProgressionPeriodIsHandedToTheServiceWhichRefusesAnUnknownOne() throws Exception {
+        when(performanceService.progression(ATHLETE_ID, EXERCISE_ID, 5)).thenThrow(new InvalidParameterException("weeks"));
+
+        mockMvc.perform(get(PROGRESSION).with(as(Role.COACH)).param("weeks", "5"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(ErrorCodes.INVALID_PARAMETER))
+                .andExpect(jsonPath("$.detail").value("Paramètre invalide : weeks"));
+        mockMvc.perform(get(PROGRESSION).with(as(Role.COACH)).param("weeks", "douze"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(ErrorCodes.INVALID_PARAMETER));
+        mockMvc.perform(get(ATHLETE + "/exercises/pas-un-uuid/progression").with(as(Role.COACH)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(ErrorCodes.INVALID_PARAMETER));
+    }
+
+    @Test
+    void theProgressionOfAnotherCoachsExerciseOrAnAthleteNotFollowedAnswers404() throws Exception {
+        when(performanceService.progression(ATHLETE_ID, EXERCISE_ID, 12))
+                .thenThrow(ExerciseErrors.exerciseNotFound())
+                .thenThrow(AthleteErrors.athleteNotFound());
+
+        mockMvc.perform(get(PROGRESSION).with(as(Role.COACH)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(ExerciseErrors.EXERCISE_NOT_FOUND));
+        mockMvc.perform(get(PROGRESSION).with(as(Role.COACH)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(AthleteErrors.ATHLETE_NOT_FOUND));
+    }
+
+    // ---------------------------------------------------------------- US31 records
+
+    @Test
+    void theRecordsAnswerTheBestSetOfEachExercise() throws Exception {
+        when(performanceService.personalRecords(ATHLETE_ID)).thenReturn(new PersonalRecordsResponse(ATHLETE_ID, List.of(
+                new PersonalRecord(EXERCISE_ID, "Tractions", MuscleGroup.DOS, true, null, 12, DATE, SESSION_ID),
+                new PersonalRecord(UUID.randomUUID(), "Squat", MuscleGroup.QUADRICEPS, false,
+                        new BigDecimal("110.0"), 5, DATE.minusDays(7), UUID.randomUUID()))));
+
+        mockMvc.perform(get(RECORDS).with(as(Role.COACH)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.athleteId").value(ATHLETE_ID.toString()))
+                .andExpect(jsonPath("$.records", hasSize(2)))
+                .andExpect(jsonPath("$.records[0].bodyweight").value(true))
+                .andExpect(jsonPath("$.records[0].loadKg").isEmpty())
+                .andExpect(jsonPath("$.records[0].reps").value(12))
+                .andExpect(jsonPath("$.records[0].plannedSessionId").value(SESSION_ID.toString()))
+                .andExpect(jsonPath("$.records[1].loadKg").value(110.0))
+                .andExpect(jsonPath("$.records[1].date").value("2026-10-27"));
+    }
+
+    @Test
+    void theRecordsOfAnAthleteNotFollowedAnswer404() throws Exception {
+        when(performanceService.personalRecords(ATHLETE_ID)).thenThrow(AthleteErrors.athleteNotFound());
+
+        mockMvc.perform(get(RECORDS).with(as(Role.COACH)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(AthleteErrors.ATHLETE_NOT_FOUND));
     }
 }

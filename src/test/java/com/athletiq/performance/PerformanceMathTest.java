@@ -46,4 +46,28 @@ class PerformanceMathTest {
         assertThat(PerformanceMath.deltaPercent(kg("0.0"), kg("100.0"))).isNull();
         assertThat(PerformanceMath.deltaPercent(kg("100.0"), null)).isNull();
     }
+
+    @Test
+    void theCompletionRateIsDoneOverPastSessionsRoundedHalfUp() {
+        assertThat(PerformanceMath.completionRate(2, 1)).isEqualTo(67);
+        assertThat(PerformanceMath.completionRate(1, 2)).isEqualTo(33);
+        assertThat(PerformanceMath.completionRate(1, 7)).isEqualTo(13);
+        assertThat(PerformanceMath.completionRate(1, 1)).isEqualTo(50);
+        assertThat(PerformanceMath.completionRate(3, 0)).isEqualTo(100);
+        assertThat(PerformanceMath.completionRate(0, 4)).isZero();
+    }
+
+    @Test
+    void withoutPastSessionTheCompletionRateIsNullNotZero() {
+        assertThat(PerformanceMath.completionRate(0, 0)).isNull();
+    }
+
+    @Test
+    void theAverageRpeHasOneDecimalRoundedHalfUpAndIsNullWithoutValue() {
+        assertThat(PerformanceMath.average(15, 2)).isEqualTo(new BigDecimal("7.5"));
+        assertThat(PerformanceMath.average(23, 3)).isEqualTo(new BigDecimal("7.7"));
+        assertThat(PerformanceMath.average(25, 4)).isEqualTo(new BigDecimal("6.3"));
+        assertThat(PerformanceMath.average(14, 2)).isEqualTo(new BigDecimal("7.0"));
+        assertThat(PerformanceMath.average(0, 0)).isNull();
+    }
 }

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -18,7 +19,15 @@ import com.athletiq.common.exception.InvalidParameterException;
 import com.athletiq.common.exception.ResourceNotFoundException;
 import com.athletiq.common.security.AccessGuard;
 import com.athletiq.common.security.CurrentUser;
+import com.athletiq.exercise.ExerciseErrors;
+import com.athletiq.exercise.ExerciseService;
 import com.athletiq.exercise.MuscleGroup;
+import com.athletiq.exercise.dto.ExerciseResponse;
+import com.athletiq.performance.dto.PerformedExerciseResponse;
+import com.athletiq.performance.dto.PersonalRecord;
+import com.athletiq.performance.dto.PersonalRecordsResponse;
+import com.athletiq.performance.dto.ProgressionPoint;
+import com.athletiq.performance.dto.ProgressionResponse;
 import com.athletiq.performance.dto.ReviewExercise;
 import com.athletiq.performance.dto.ReviewSet;
 import com.athletiq.performance.dto.SessionHistoryFilter;
@@ -43,6 +52,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -67,6 +77,8 @@ class PerformanceServiceTest {
     @Mock
     private UserService userService;
     @Mock
+    private ExerciseService exerciseService;
+    @Mock
     private AccessGuard accessGuard;
     @Mock
     private CurrentUser currentUser;
@@ -80,8 +92,8 @@ class PerformanceServiceTest {
     void setUp() {
         PlanningClock clock = new PlanningClock(Clock.fixed(NOW, ZoneOffset.UTC),
                 new PlanningProperties(PlanningProperties.DEFAULT_ZONE));
-        service = new PerformanceService(performanceRepository, new PerformanceMapperImpl(), userService, accessGuard,
-                currentUser, clock);
+        service = new PerformanceService(performanceRepository, new PerformanceMapperImpl(), userService,
+                exerciseService, accessGuard, currentUser, clock);
         lenient().when(currentUser.id()).thenReturn(coachId);
         lenient().when(userService.findNames(List.of(athleteId)))
                 .thenReturn(Map.of(athleteId, new UserName("Lucas", "Girard")));
@@ -387,5 +399,208 @@ class PerformanceServiceTest {
         Throwable thrown = catchThrowable(() -> service.review(plannedSessionId));
 
         assertDomainError(thrown, ResourceNotFoundException.class, PlanningErrors.PLANNED_SESSION_NOT_FOUND);
+    }
+
+    // ---------------------------------------------------------------- US30 exercices réalisés et progression
+
+    private static final Instant EARLY = Instant.parse("2026-09-01T08:00:00Z");
+    private static final Instant LATE = Instant.parse("2026-09-01T09:00:00Z");
+    private final UUID squatId = UUID.randomUUID();
+    private final UUID raiseId = UUID.randomUUID();
+    private final UUID facePullId = UUID.randomUUID();
+
+    private static PerformedSetGroupRow group(UUID exerciseId, String name, MuscleGroup muscleGroup, UUID sessionId,
+                                              LocalDate date, Instant createdAt, String loadKg, int maxReps) {
+        return new PerformedSetGroupRow(exerciseId, name, muscleGroup, sessionId, date, createdAt, kg(loadKg), maxReps);
+    }
+
+    @Test
+    void thePerformedExercisesCountTheirSessionsAndTakeTheLabelOfTheLatestSnapshot() {
+        UUID older = UUID.randomUUID();
+        UUID newer = UUID.randomUUID();
+        UUID sameDayLater = UUID.randomUUID();
+        when(performanceRepository.findPerformedSetGroups(coachId, athleteId)).thenReturn(List.of(
+                group(squatId, "Squat", MuscleGroup.QUADRICEPS, older, TODAY.minusDays(20), EARLY, "100.0", 5),
+                group(squatId, "Squat", MuscleGroup.QUADRICEPS, older, TODAY.minusDays(20), EARLY, "110.0", 3),
+                group(squatId, "Squat barre", MuscleGroup.QUADRICEPS, newer, TODAY.minusDays(3), EARLY, "105.0", 5),
+                group(squatId, "Squat arrière", MuscleGroup.QUADRICEPS, sameDayLater, TODAY.minusDays(3), LATE,
+                        "100.0", 6),
+                group(facePullId, "Face pull", MuscleGroup.EPAULES, older, TODAY.minusDays(20), EARLY, "20.0", 12),
+                group(raiseId, "Élévations latérales", MuscleGroup.EPAULES, newer, TODAY.minusDays(3), EARLY, "8.0", 15),
+                group(pullUpId, "Tractions", MuscleGroup.DOS, newer, TODAY.minusDays(3), EARLY, null, 8)));
+
+        List<PerformedExerciseResponse> exercises = service.performedExercises(athleteId);
+
+        verify(accessGuard).assertCoachOfAthlete(athleteId);
+        // Groupe musculaire (code), puis nom sans tenir compte des accents : « Élévations » avant « Face pull ».
+        assertThat(exercises).extracting(PerformedExerciseResponse::exerciseName)
+                .containsExactly("Tractions", "Élévations latérales", "Face pull", "Squat arrière");
+        PerformedExerciseResponse squat = exercises.get(3);
+        assertThat(squat.exerciseId()).isEqualTo(squatId);
+        assertThat(squat.sessionCount()).isEqualTo(3);
+        assertThat(squat.lastPerformedOn()).isEqualTo(TODAY.minusDays(3));
+        assertThat(exercises.getFirst().muscleGroup()).isEqualTo(MuscleGroup.DOS);
+    }
+
+    @Test
+    void thePerformedExercisesOfAnAthleteNotFollowedAnswer404() {
+        doThrow(AthleteErrors.athleteNotFound()).when(accessGuard).assertCoachOfAthlete(athleteId);
+
+        Throwable thrown = catchThrowable(() -> service.performedExercises(athleteId));
+
+        assertDomainError(thrown, ResourceNotFoundException.class, AthleteErrors.ATHLETE_NOT_FOUND);
+        verifyNoInteractions(performanceRepository);
+    }
+
+    @Test
+    void theProgressionHasOnePointPerDoneSessionSinceWeeksAgoWithTheLatestLabel() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        when(performanceRepository.findProgressionRows(coachId, athleteId, squatId, TODAY.minusDays(84)))
+                .thenReturn(List.of(
+                        new ProgressionRow(first, TODAY.minusDays(30), EARLY, kg("110"), 5, kg("1330.00")),
+                        new ProgressionRow(second, TODAY.plusDays(1), EARLY, kg("115.0"), 5, kg("575.0"))));
+        when(performanceRepository.findLatestLabels(coachId, athleteId, squatId, PageRequest.of(0, 1)))
+                .thenReturn(List.of(new ExerciseLabel("Squat barre", MuscleGroup.QUADRICEPS)));
+
+        ProgressionResponse progression = service.progression(athleteId, squatId, 12);
+
+        InOrder order = inOrder(accessGuard);
+        order.verify(accessGuard).assertCoachOfAthlete(athleteId);
+        order.verify(accessGuard).assertExerciseOwner(squatId);
+        assertThat(progression.weeks()).isEqualTo(12);
+        assertThat(progression.from()).isEqualTo(TODAY.minusDays(84));
+        assertThat(progression.today()).isEqualTo(TODAY);
+        assertThat(progression.exerciseName()).isEqualTo("Squat barre");
+        assertThat(progression.muscleGroup()).isEqualTo(MuscleGroup.QUADRICEPS);
+        assertThat(progression.bodyweight()).isFalse();
+        assertThat(progression.points()).containsExactly(
+                new ProgressionPoint(first, TODAY.minusDays(30), kg("110.0"), 5, kg("1330.0")),
+                new ProgressionPoint(second, TODAY.plusDays(1), kg("115.0"), 5, kg("575.0")));
+        verifyNoInteractions(exerciseService);
+    }
+
+    @Test
+    void aBodyweightProgressionFollowsTheMaxReps() {
+        when(performanceRepository.findProgressionRows(any(), any(), any(), any())).thenReturn(List.of(
+                new ProgressionRow(UUID.randomUUID(), TODAY.minusDays(3), EARLY, null, 10, null)));
+        when(performanceRepository.findLatestLabels(any(), any(), any(), any()))
+                .thenReturn(List.of(new ExerciseLabel("Tractions", MuscleGroup.DOS)));
+
+        ProgressionResponse progression = service.progression(athleteId, pullUpId, 4);
+
+        assertThat(progression.bodyweight()).isTrue();
+        assertThat(progression.from()).isEqualTo(TODAY.minusDays(28));
+        assertThat(progression.points()).singleElement().satisfies(point -> {
+            assertThat(point.maxReps()).isEqualTo(10);
+            assertThat(point.maxLoadKg()).isNull();
+            assertThat(point.volumeKg()).isNull();
+        });
+    }
+
+    @Test
+    void anExerciseNeverPerformedHasNoPointAndTheLabelOfTheLibrary() {
+        when(performanceRepository.findProgressionRows(any(), any(), any(), any())).thenReturn(List.of());
+        when(performanceRepository.findLatestLabels(any(), any(), any(), any())).thenReturn(List.of());
+        when(exerciseService.get(squatId)).thenReturn(new ExerciseResponse(squatId, "Squat", null,
+                MuscleGroup.QUADRICEPS, null, null, NOW, NOW));
+
+        ProgressionResponse progression = service.progression(athleteId, squatId, 52);
+
+        assertThat(progression.points()).isEmpty();
+        assertThat(progression.exerciseName()).isEqualTo("Squat");
+        assertThat(progression.muscleGroup()).isEqualTo(MuscleGroup.QUADRICEPS);
+        assertThat(progression.from()).isEqualTo(TODAY.minusDays(364));
+    }
+
+    @Test
+    void aProgressionPeriodOtherThan4Or12Or26Or52WeeksAnswers400BeforeAnyLookup() {
+        for (int weeks : List.of(0, 1, 8, 13, 53, -4)) {
+            Throwable thrown = catchThrowable(() -> service.progression(athleteId, squatId, weeks));
+            assertDomainError(thrown, InvalidParameterException.class, ErrorCodes.INVALID_PARAMETER);
+        }
+        verifyNoInteractions(accessGuard, performanceRepository);
+    }
+
+    @Test
+    void theProgressionOfAnAthleteNotFollowedOrOfAnotherCoachsExerciseAnswers404() {
+        UUID otherAthlete = UUID.randomUUID();
+        doThrow(AthleteErrors.athleteNotFound()).when(accessGuard).assertCoachOfAthlete(athleteId);
+        doThrow(ExerciseErrors.exerciseNotFound()).when(accessGuard).assertExerciseOwner(squatId);
+
+        Throwable athlete = catchThrowable(() -> service.progression(athleteId, squatId, 12));
+        Throwable exercise = catchThrowable(() -> service.progression(otherAthlete, squatId, 12));
+
+        assertDomainError(athlete, ResourceNotFoundException.class, AthleteErrors.ATHLETE_NOT_FOUND);
+        assertDomainError(exercise, ResourceNotFoundException.class, ExerciseErrors.EXERCISE_NOT_FOUND);
+        // Athlète d'abord : l'exercice n'est contrôlé que pour un athlète suivi.
+        verify(accessGuard).assertExerciseOwner(squatId);
+        verifyNoInteractions(performanceRepository);
+    }
+
+    // ---------------------------------------------------------------- US31 records
+
+    @Test
+    void aRecordIsTheBestLoadThenMoreRepsThenTheEarliestDate() {
+        UUID early = UUID.randomUUID();
+        UUID middle = UUID.randomUUID();
+        UUID late = UUID.randomUUID();
+        when(performanceRepository.findPerformedSetGroups(coachId, athleteId)).thenReturn(List.of(
+                group(squatId, "Squat", MuscleGroup.QUADRICEPS, early, TODAY.minusDays(30), EARLY, "110.0", 3),
+                group(squatId, "Squat", MuscleGroup.QUADRICEPS, middle, TODAY.minusDays(20), EARLY, "110.0", 5),
+                group(squatId, "Squat", MuscleGroup.QUADRICEPS, middle, TODAY.minusDays(20), EARLY, "100.0", 8),
+                group(squatId, "Squat barre", MuscleGroup.QUADRICEPS, late, TODAY.minusDays(10), EARLY, "110.0", 5),
+                group(squatId, "Squat barre", MuscleGroup.QUADRICEPS, late, TODAY.minusDays(10), EARLY, null, 20)));
+
+        PersonalRecordsResponse records = service.personalRecords(athleteId);
+
+        verify(accessGuard).assertCoachOfAthlete(athleteId);
+        assertThat(records.athleteId()).isEqualTo(athleteId);
+        // 110 kg : 5 répétitions battent 3 ; à 110 × 5, la date la plus ancienne l'emporte. Libellé le plus récent.
+        assertThat(records.records()).containsExactly(new PersonalRecord(squatId, "Squat barre",
+                MuscleGroup.QUADRICEPS, false, kg("110.0"), 5, TODAY.minusDays(20), middle));
+    }
+
+    @Test
+    void aBodyweightRecordIsTheMostRepsThenTheEarliestDate() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        when(performanceRepository.findPerformedSetGroups(coachId, athleteId)).thenReturn(List.of(
+                group(pullUpId, "Tractions", MuscleGroup.DOS, second, TODAY.minusDays(5), EARLY, null, 12),
+                group(pullUpId, "Tractions", MuscleGroup.DOS, first, TODAY.minusDays(12), EARLY, null, 12)));
+
+        PersonalRecord record = service.personalRecords(athleteId).records().getFirst();
+
+        assertThat(record.bodyweight()).isTrue();
+        assertThat(record.loadKg()).isNull();
+        assertThat(record.reps()).isEqualTo(12);
+        assertThat(record.date()).isEqualTo(TODAY.minusDays(12));
+        assertThat(record.plannedSessionId()).isEqualTo(first);
+    }
+
+    @Test
+    void recordsAreSortedByMuscleGroupThenNameAndEmptyWithoutDoneSession() {
+        when(performanceRepository.findPerformedSetGroups(coachId, athleteId))
+                .thenReturn(List.of(
+                        group(squatId, "Squat", MuscleGroup.QUADRICEPS, plannedSessionId, YESTERDAY, EARLY, "100.0", 5),
+                        group(facePullId, "Face pull", MuscleGroup.EPAULES, plannedSessionId, YESTERDAY, EARLY, "20.0",
+                                12),
+                        group(raiseId, "élévations", MuscleGroup.EPAULES, plannedSessionId, YESTERDAY, EARLY, "8.0",
+                                15)))
+                .thenReturn(List.of());
+
+        assertThat(service.personalRecords(athleteId).records()).extracting(PersonalRecord::exerciseName)
+                .containsExactly("élévations", "Face pull", "Squat");
+        assertThat(service.personalRecords(athleteId).records()).isEmpty();
+    }
+
+    @Test
+    void theRecordsOfAnAthleteNotFollowedAnswer404() {
+        doThrow(AthleteErrors.athleteNotFound()).when(accessGuard).assertCoachOfAthlete(athleteId);
+
+        Throwable thrown = catchThrowable(() -> service.personalRecords(athleteId));
+
+        assertDomainError(thrown, ResourceNotFoundException.class, AthleteErrors.ATHLETE_NOT_FOUND);
+        verifyNoInteractions(performanceRepository);
     }
 }

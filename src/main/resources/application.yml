@@ -70,6 +70,14 @@ athletiq:
   # Planification (#6, Q12) : « aujourd'hui » est calculé dans ce fuseau unique, identique web et mobile.
   planning:
     zone: Europe/Paris
+  # Tableau de bord (#7, Q14) : « À surveiller » = au moins missed-threshold séance non faite sur les missed-days
+  # derniers jours (aujourd'hui exclu), ou un taux de réalisation sous min-completion-rate % avec au moins
+  # min-past-sessions séances passées.
+  kpi:
+    missed-days: 7
+    missed-threshold: 1
+    min-completion-rate: 70
+    min-past-sessions: 3
 
 springdoc:
   api-docs:

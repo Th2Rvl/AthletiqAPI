@@ -1,5 +1,8 @@
 package com.athletiq.performance;
 
+import com.athletiq.performance.dto.PerformedExerciseResponse;
+import com.athletiq.performance.dto.PersonalRecordsResponse;
+import com.athletiq.performance.dto.ProgressionResponse;
 import com.athletiq.performance.dto.SessionHistoryFilter;
 import com.athletiq.performance.dto.SessionHistoryItem;
 import com.athletiq.performance.dto.SessionReviewResponse;
@@ -8,6 +11,7 @@ import com.athletiq.planning.SessionStatus;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -21,7 +25,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Suivi des athlètes par leur coach (US27 à US29), en lecture seule et au coach uniquement (RM2). Dates en
+ * Suivi des athlètes par leur coach (US27 à US31), en lecture seule et au coach uniquement (RM2). Dates en
  * {@code AAAA-MM-JJ} ; un paramètre mal formé ou une valeur inconnue répond 400 {@code INVALID_PARAMETER}.
  */
 @RestController
@@ -56,5 +60,23 @@ public class PerformanceController {
     @GetMapping("/planned-sessions/{plannedSessionId}/review")
     public SessionReviewResponse review(@PathVariable UUID plannedSessionId) {
         return performanceService.review(plannedSessionId);
+    }
+
+    /** Non paginée : bornée par les exercices de la bibliothèque du coach. */
+    @GetMapping(ATHLETE + "/performed-exercises")
+    public List<PerformedExerciseResponse> performedExercises(@PathVariable UUID athleteId) {
+        return performanceService.performedExercises(athleteId);
+    }
+
+    /** {@code weeks} : 4, 12 (par défaut), 26 ou 52. */
+    @GetMapping(ATHLETE + "/exercises/{exerciseId}/progression")
+    public ProgressionResponse progression(@PathVariable UUID athleteId, @PathVariable UUID exerciseId,
+                                           @RequestParam(defaultValue = "12") int weeks) {
+        return performanceService.progression(athleteId, exerciseId, weeks);
+    }
+
+    @GetMapping(ATHLETE + "/personal-records")
+    public PersonalRecordsResponse personalRecords(@PathVariable UUID athleteId) {
+        return performanceService.personalRecords(athleteId);
     }
 }

@@ -118,4 +118,91 @@ public interface SessionPerformanceRepository extends JpaRepository<SessionPerfo
             """)
     List<ReviewLineRow> findReviewLines(@Param("coachId") UUID coachId,
                                         @Param("plannedSessionId") UUID plannedSessionId);
+
+    /*
+     * Lot 2 (US30, US31) : une série « réalisée » est une ligne aux répétitions renseignées, dans une réalisation
+     * validée d'une séance de ce coach pour cet athlète. Regroupement par exercise_id de l'instantané (RM6).
+     */
+
+    /**
+     * US30, US31 : séries réalisées de cet athlète avec ce coach, toutes périodes, regroupées par exercice,
+     * séance et charge, avec le meilleur nombre de répétitions à cette charge.
+     */
+    @Query("""
+            select new com.athletiq.performance.PerformedSetGroupRow(e.exerciseId, e.exerciseName, e.muscleGroup,
+                   ps.id, ps.scheduledDate, ps.createdAt, pf.loadKg, max(pf.reps))
+            from PerformedSet pf
+            join pf.performance sp
+            join sp.plannedSession ps
+            join pf.snapshotSet st
+            join st.snapshotExercise e
+            where ps.coach.id = :coachId and ps.athlete.id = :athleteId
+              and sp.status = com.athletiq.performance.PerformanceStatus.VALIDATED
+              and pf.reps is not null
+            group by e.exerciseId, e.exerciseName, e.muscleGroup, ps.id, ps.scheduledDate, ps.createdAt, pf.loadKg
+            """)
+    List<PerformedSetGroupRow> findPerformedSetGroups(@Param("coachId") UUID coachId,
+                                                      @Param("athleteId") UUID athleteId);
+
+    /**
+     * US30 : un point par séance réalisée à partir de {@code from} (sans borne haute, Q17), toutes les séries
+     * réalisées de l'exercice agrégées, même s'il est répété dans la séance. Tri par date croissante.
+     */
+    @Query("""
+            select new com.athletiq.performance.ProgressionRow(ps.id, ps.scheduledDate, ps.createdAt,
+                   max(pf.loadKg), max(pf.reps), sum(pf.reps * pf.loadKg))
+            from PerformedSet pf
+            join pf.performance sp
+            join sp.plannedSession ps
+            join pf.snapshotSet st
+            join st.snapshotExercise e
+            where ps.coach.id = :coachId and ps.athlete.id = :athleteId and e.exerciseId = :exerciseId
+              and sp.status = com.athletiq.performance.PerformanceStatus.VALIDATED
+              and pf.reps is not null
+              and ps.scheduledDate >= :from
+            group by ps.id, ps.scheduledDate, ps.createdAt
+            order by ps.scheduledDate asc, ps.createdAt asc, ps.id asc
+            """)
+    List<ProgressionRow> findProgressionRows(@Param("coachId") UUID coachId, @Param("athleteId") UUID athleteId,
+                                             @Param("exerciseId") UUID exerciseId, @Param("from") LocalDate from);
+
+    /** RM6 : libellé de l'exercice dans l'instantané de sa séance réalisée la plus récente (la première ligne). */
+    @Query("""
+            select new com.athletiq.performance.ExerciseLabel(e.exerciseName, e.muscleGroup)
+            from PerformedSet pf
+            join pf.performance sp
+            join sp.plannedSession ps
+            join pf.snapshotSet st
+            join st.snapshotExercise e
+            where ps.coach.id = :coachId and ps.athlete.id = :athleteId and e.exerciseId = :exerciseId
+              and sp.status = com.athletiq.performance.PerformanceStatus.VALIDATED
+              and pf.reps is not null
+            order by ps.scheduledDate desc, ps.createdAt desc, ps.id desc
+            """)
+    List<ExerciseLabel> findLatestLabels(@Param("coachId") UUID coachId, @Param("athleteId") UUID athleteId,
+                                         @Param("exerciseId") UUID exerciseId, Pageable pageable);
+
+    /**
+     * US32 : par athlète, ses séances passées avec ce coach du {@code from} au {@code to} inclus (une séance
+     * annulée n'existe plus) : réalisées, non faites, non faites depuis {@code recentFrom}, et somme et nombre
+     * des RPE renseignés des réalisées. Un athlète sans séance n'a pas de ligne.
+     */
+    @Query("""
+            select new com.athletiq.performance.AthleteKpiRow(ps.athlete.id,
+                   sum(case when sp.id is not null then 1 else 0 end),
+                   sum(case when sp.id is null then 1 else 0 end),
+                   sum(case when sp.id is null and ps.scheduledDate >= :recentFrom then 1 else 0 end),
+                   sum(sp.rpe), count(sp.rpe))
+            from PlannedSession ps
+            left join SessionPerformance sp on sp.plannedSession = ps
+                 and sp.status = com.athletiq.performance.PerformanceStatus.VALIDATED
+            where ps.coach.id = :coachId and ps.athlete.id in :athleteIds
+              and ps.scheduledDate between :from and :to
+            group by ps.athlete.id
+            """)
+    List<AthleteKpiRow> aggregateKpis(@Param("coachId") UUID coachId,
+                                      @Param("athleteIds") Collection<UUID> athleteIds,
+                                      @Param("from") LocalDate from,
+                                      @Param("to") LocalDate to,
+                                      @Param("recentFrom") LocalDate recentFrom);
 }

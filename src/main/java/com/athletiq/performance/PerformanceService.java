@@ -3,6 +3,13 @@ package com.athletiq.performance;
 import com.athletiq.common.exception.InvalidParameterException;
 import com.athletiq.common.security.AccessGuard;
 import com.athletiq.common.security.CurrentUser;
+import com.athletiq.exercise.ExerciseService;
+import com.athletiq.exercise.dto.ExerciseResponse;
+import com.athletiq.performance.dto.PerformedExerciseResponse;
+import com.athletiq.performance.dto.PersonalRecord;
+import com.athletiq.performance.dto.PersonalRecordsResponse;
+import com.athletiq.performance.dto.ProgressionPoint;
+import com.athletiq.performance.dto.ProgressionResponse;
 import com.athletiq.performance.dto.ReviewExercise;
 import com.athletiq.performance.dto.ReviewSet;
 import com.athletiq.performance.dto.SessionHistoryFilter;
@@ -15,13 +22,16 @@ import com.athletiq.planning.SessionStatus;
 import com.athletiq.user.UserName;
 import com.athletiq.user.UserService;
 import java.math.BigDecimal;
+import java.text.Collator;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -33,8 +43,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Suivi d'un athlète par son coach (US27 à US29) : en-tête, historique, prévu / réalisé et ressenti, en
- * lecture seule (Q12).
+ * Suivi d'un athlète par son coach (US27 à US31) : en-tête, historique, prévu / réalisé et ressenti,
+ * progression et records, en lecture seule (Q12) et calculés à la lecture (RM7).
  *
  * <p>Chaque lecture existe en deux temps. La méthode publique, appelée par le controller, valide les
  * paramètres (400), passe par l'{@code AccessGuard} (rôle COACH, athlète suivi par un lien actif ou séance
@@ -50,10 +60,15 @@ public class PerformanceService {
     static final int MAX_HISTORY_SPAN_DAYS = 364;
     /** Période par défaut : 4 semaines, {@code from = to - 27} jours. */
     static final int DEFAULT_HISTORY_SPAN_DAYS = 27;
+    /** US30 : périodes de progression permises, en semaines (12 par défaut). */
+    static final Set<Integer> PROGRESSION_WEEKS = Set.of(4, 12, 26, 52);
+    /** Noms d'exercice triés comme en base (collation ai_ci) : sans tenir compte de la casse ni des accents. */
+    private static final Comparator<String> NAME_ORDER = nameOrder();
 
     private final SessionPerformanceRepository performanceRepository;
     private final PerformanceMapper mapper;
     private final UserService userService;
+    private final ExerciseService exerciseService;
     private final AccessGuard accessGuard;
     private final CurrentUser currentUser;
     private final PlanningClock planningClock;
@@ -207,5 +222,138 @@ public class PerformanceService {
                 .map(volume)
                 .filter(Objects::nonNull)
                 .reduce(PerformanceMath.ZERO_KG, BigDecimal::add);
+    }
+
+    // ---------------------------------------------------------------- US30 exercices réalisés et progression
+
+    /** US30 : exercices d'au moins une séance réalisée de cet athlète avec ce coach, pour choisir la progression. */
+    @Transactional(readOnly = true)
+    public List<PerformedExerciseResponse> performedExercises(UUID athleteId) {
+        accessGuard.assertCoachOfAthlete(athleteId);
+        return performedExercises(currentUser.id(), athleteId);
+    }
+
+    /** Sans contrôle d'accès : l'appelant a vérifié rôle et propriété. */
+    @Transactional(readOnly = true)
+    List<PerformedExerciseResponse> performedExercises(UUID coachId, UUID athleteId) {
+        Objects.requireNonNull(coachId, "coachId");
+        return byExercise(performanceRepository.findPerformedSetGroups(coachId, athleteId)).values().stream()
+                .map(rows -> {
+                    PerformedSetGroupRow latest = latest(rows);
+                    int sessionCount = (int) rows.stream().map(PerformedSetGroupRow::plannedSessionId).distinct().count();
+                    return new PerformedExerciseResponse(latest.exerciseId(), latest.exerciseName(),
+                            latest.muscleGroup(), sessionCount, latest.date());
+                })
+                .sorted(Comparator.comparing((PerformedExerciseResponse exercise) -> exercise.muscleGroup().name())
+                        .thenComparing(PerformedExerciseResponse::exerciseName, NAME_ORDER)
+                        .thenComparing(PerformedExerciseResponse::exerciseId))
+                .toList();
+    }
+
+    /**
+     * US30 : un point par séance réalisée sur {@code weeks} semaines (4, 12, 26 ou 52, sinon 400), sans borne
+     * haute (Q17). L'athlète doit être suivi (404 {@code ATHLETE_NOT_FOUND}) et l'exercice appartenir au coach
+     * (404 {@code EXERCISE_NOT_FOUND}).
+     */
+    @Transactional(readOnly = true)
+    public ProgressionResponse progression(UUID athleteId, UUID exerciseId, int weeks) {
+        if (!PROGRESSION_WEEKS.contains(weeks)) {
+            throw new InvalidParameterException("weeks");
+        }
+        accessGuard.assertCoachOfAthlete(athleteId);
+        accessGuard.assertExerciseOwner(exerciseId);
+        return progression(currentUser.id(), athleteId, exerciseId, weeks);
+    }
+
+    /** Sans contrôle d'accès : l'appelant a vérifié rôle et propriété, et la période. */
+    @Transactional(readOnly = true)
+    ProgressionResponse progression(UUID coachId, UUID athleteId, UUID exerciseId, int weeks) {
+        Objects.requireNonNull(coachId, "coachId");
+        LocalDate today = planningClock.today();
+        LocalDate from = today.minusWeeks(weeks);
+        List<ProgressionPoint> points = performanceRepository
+                .findProgressionRows(coachId, athleteId, exerciseId, from).stream()
+                .map(row -> new ProgressionPoint(row.plannedSessionId(), row.date(),
+                        PerformanceMath.kg(row.maxLoadKg()), row.maxReps(), PerformanceMath.kg(row.volumeKg())))
+                .toList();
+        boolean bodyweight = points.stream().allMatch(point -> point.maxLoadKg() == null);
+        ExerciseLabel label = performanceRepository
+                .findLatestLabels(coachId, athleteId, exerciseId, PageRequest.of(0, 1)).stream()
+                .findFirst()
+                .orElseGet(() -> libraryLabel(exerciseId));
+        return new ProgressionResponse(athleteId, exerciseId, label.exerciseName(), label.muscleGroup(), bodyweight,
+                weeks, from, today, points);
+    }
+
+    /** Exercice jamais réalisé avec ce coach : libellé de sa bibliothèque (lecture du coach connecté). */
+    private ExerciseLabel libraryLabel(UUID exerciseId) {
+        ExerciseResponse exercise = exerciseService.get(exerciseId);
+        return new ExerciseLabel(exercise.name(), exercise.muscleGroup());
+    }
+
+    // ---------------------------------------------------------------- US31 records
+
+    /** US31 : un record par exercice réalisé, toutes périodes, recalculé à chaque lecture (correction comprise). */
+    @Transactional(readOnly = true)
+    public PersonalRecordsResponse personalRecords(UUID athleteId) {
+        accessGuard.assertCoachOfAthlete(athleteId);
+        return personalRecords(currentUser.id(), athleteId);
+    }
+
+    /** Sans contrôle d'accès : l'appelant a vérifié rôle et propriété. */
+    @Transactional(readOnly = true)
+    PersonalRecordsResponse personalRecords(UUID coachId, UUID athleteId) {
+        Objects.requireNonNull(coachId, "coachId");
+        List<PersonalRecord> records = byExercise(performanceRepository.findPerformedSetGroups(coachId, athleteId))
+                .values().stream()
+                .map(PerformanceService::personalRecord)
+                .sorted(Comparator.comparing((PersonalRecord record) -> record.muscleGroup().name())
+                        .thenComparing(PersonalRecord::exerciseName, NAME_ORDER)
+                        .thenComparing(PersonalRecord::exerciseId))
+                .toList();
+        return new PersonalRecordsResponse(athleteId, records);
+    }
+
+    /**
+     * Q10 : la meilleure charge parmi les séries faites chargées, puis le plus de répétitions, puis la date la
+     * plus ancienne ; sans série chargée (poids du corps), le plus de répétitions, puis la date la plus ancienne.
+     */
+    private static PersonalRecord personalRecord(List<PerformedSetGroupRow> rows) {
+        List<PerformedSetGroupRow> loaded = rows.stream().filter(row -> row.loadKg() != null).toList();
+        boolean bodyweight = loaded.isEmpty();
+        Comparator<PerformedSetGroupRow> mostReps =
+                Comparator.comparing(PerformedSetGroupRow::maxReps, Comparator.reverseOrder());
+        Comparator<PerformedSetGroupRow> earliest = Comparator.comparing(PerformedSetGroupRow::date)
+                .thenComparing(PerformedSetGroupRow::createdAt)
+                .thenComparing(PerformedSetGroupRow::plannedSessionId);
+        PerformedSetGroupRow best = bodyweight
+                ? rows.stream().min(mostReps.thenComparing(earliest)).orElseThrow()
+                : loaded.stream().min(Comparator.comparing(PerformedSetGroupRow::loadKg, Comparator.reverseOrder())
+                        .thenComparing(mostReps)
+                        .thenComparing(earliest)).orElseThrow();
+        PerformedSetGroupRow label = latest(rows);
+        return new PersonalRecord(label.exerciseId(), label.exerciseName(), label.muscleGroup(), bodyweight,
+                PerformanceMath.kg(best.loadKg()), best.maxReps(), best.date(), best.plannedSessionId());
+    }
+
+    /** RM6 : regroupement par exercice de la bibliothèque ({@code exercise_id} de l'instantané). */
+    private static Map<UUID, List<PerformedSetGroupRow>> byExercise(List<PerformedSetGroupRow> rows) {
+        return rows.stream().collect(Collectors.groupingBy(PerformedSetGroupRow::exerciseId, LinkedHashMap::new,
+                Collectors.toList()));
+    }
+
+    /** RM6 : la ligne de la séance réalisée la plus récente porte le libellé à afficher. */
+    private static PerformedSetGroupRow latest(List<PerformedSetGroupRow> rows) {
+        return rows.stream()
+                .max(Comparator.comparing(PerformedSetGroupRow::date)
+                        .thenComparing(PerformedSetGroupRow::createdAt)
+                        .thenComparing(PerformedSetGroupRow::plannedSessionId))
+                .orElseThrow();
+    }
+
+    private static Comparator<String> nameOrder() {
+        Collator collator = Collator.getInstance(Locale.FRENCH);
+        collator.setStrength(Collator.PRIMARY);
+        return collator::compare;
     }
 }

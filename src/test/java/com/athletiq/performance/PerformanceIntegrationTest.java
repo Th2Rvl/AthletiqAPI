@@ -655,4 +655,223 @@ class PerformanceIntegrationTest {
         }
         return request.contentType(MediaType.APPLICATION_JSON).content(body);
     }
+
+    // ---------------------------------------------------------------- US30, US31 progression et records
+
+    @Test
+    void performedExercisesProgressionAndRecordsComeFromTheDoneSetsOfThisCoachOnly() throws Exception {
+        String squat = createExercise(coachToken, "Squat", "QUADRICEPS");
+        // Squat 5 × 100, 5 × 100 ; tractions 6 au poids du corps ; squat à nouveau 3 × 110 (exercice répété).
+        String legs = createWorkout(coachToken, "Jambes", List.of(exerciseJson(squat, null, "5:100", "5:100"),
+                exerciseJson(pullUp, null, "6:"), exerciseJson(squat, null, "3:110")));
+        String d100 = plan(coachToken, lucas, legs, today.minusDays(100));
+        UUID d100Performance = validate(d100, lucas, 9, 4, null,
+                done(5, "120.0"), done(5, "120.0"), done(6, null), done(3, "120.0"));
+        String d30 = plan(coachToken, lucas, legs, today.minusDays(30));
+        validate(d30, lucas, 7, 3, null, done(5, "100.0"), done(5, "100.0"), done(6, null), done(3, "110.0"));
+        String d20 = plan(coachToken, lucas, legs, today.minusDays(20));
+        validate(d20, lucas, 8, 3, null, done(5, "110.0"), done(4, "105.0"), done(8, null), noLine());
+        String d10 = plan(coachToken, lucas, legs, today.minusDays(10));
+        validate(d10, lucas, 8, 4, null, done(5, "110.0"), skipped(), done(10, null), done(2, "110.0"));
+        plan(coachToken, lucas, legs, today.minusDays(15));
+        String drafted = plan(coachToken, lucas, legs, today.minusDays(5));
+        perform(drafted, lucas, "DRAFT", null, null, null, null, null, done(5, "200.0"), done(5, "200.0"),
+                done(30, null), done(5, "200.0"));
+        validate(plan(claireToken, lucas, claireWorkout, today.minusDays(4)), lucas, 6, 3, null, done(12, "30.0"));
+        // RM6 : renommé après coup, l'exercice prend le libellé de l'instantané le plus récent.
+        mockMvc.perform(json(put("/api/v1/exercises/" + squat), coachToken,
+                        "{\"name\":\"Squat barre\",\"muscleGroup\":\"QUADRICEPS\"}"))
+                .andExpect(status().isOk());
+        // Q17 : validée avant sa date, elle compte déjà (pas de borne haute).
+        String ahead = plan(coachToken, lucas, legs, today.plusDays(1));
+        validate(ahead, lucas, 6, 2, null, done(5, "100.0"), done(5, "100.0"), done(6, null), done(3, "100.0"));
+
+        String exercises = read(coachToken, "/api/v1/athletes/" + lucas.getId() + "/performed-exercises");
+        assertThat(JsonPath.<List<String>>read(exercises, "$[*].exerciseName")).containsExactly("Tractions", "Squat barre");
+        assertThat(JsonPath.<List<String>>read(exercises, "$[*].exerciseId")).containsExactly(pullUp, squat);
+        assertThat(JsonPath.<List<Integer>>read(exercises, "$[*].sessionCount")).containsExactly(5, 5);
+        assertThat(JsonPath.<List<String>>read(exercises, "$[*].lastPerformedOn"))
+                .containsOnly(today.plusDays(1).toString());
+
+        String progression = read(coachToken, progressionUri(lucas, squat));
+        assertThat(JsonPath.<String>read(progression, "$.exerciseName")).isEqualTo("Squat barre");
+        assertThat(JsonPath.<Boolean>read(progression, "$.bodyweight")).isFalse();
+        assertThat(JsonPath.<Integer>read(progression, "$.weeks")).isEqualTo(12);
+        assertThat(JsonPath.<String>read(progression, "$.from")).isEqualTo(today.minusDays(84).toString());
+        assertThat(JsonPath.<List<String>>read(progression, "$.points[*].plannedSessionId"))
+                .containsExactly(d30, d20, d10, ahead);
+        assertThat(JsonPath.<List<Double>>read(progression, "$.points[*].maxLoadKg"))
+                .containsExactly(110.0, 110.0, 110.0, 100.0);
+        assertThat(JsonPath.<List<Integer>>read(progression, "$.points[*].maxReps")).containsExactly(5, 5, 5, 5);
+        // Séries réalisées seulement, les deux squats de la séance agrégés : 5 × 100 + 5 × 100 + 3 × 110 = 1330.
+        assertThat(JsonPath.<List<Double>>read(progression, "$.points[*].volumeKg"))
+                .containsExactly(1330.0, 970.0, 770.0, 1300.0);
+        assertThat(JsonPath.<List<String>>read(read(coachToken, progressionUri(lucas, squat) + "?weeks=26"),
+                "$.points[*].plannedSessionId")).containsExactly(d100, d30, d20, d10, ahead);
+
+        String pullUps = read(coachToken, progressionUri(lucas, pullUp) + "?weeks=4");
+        assertThat(JsonPath.<Boolean>read(pullUps, "$.bodyweight")).isTrue();
+        assertThat(JsonPath.<List<Integer>>read(pullUps, "$.points[*].maxReps")).containsExactly(8, 10, 6);
+        assertThat(JsonPath.<List<Object>>read(pullUps, "$.points[*].maxLoadKg")).containsOnlyNulls();
+        assertThat(JsonPath.<List<Object>>read(pullUps, "$.points[*].volumeKg")).containsOnlyNulls();
+
+        // Jamais réalisé : aucun point, libellé de la bibliothèque.
+        String never = read(coachToken, progressionUri(lucas, bench));
+        assertThat(JsonPath.<List<Object>>read(never, "$.points")).isEmpty();
+        assertThat(JsonPath.<String>read(never, "$.exerciseName")).isEqualTo("Développé couché");
+        assertThat(JsonPath.<String>read(never, "$.muscleGroup")).isEqualTo("PECTORAUX");
+
+        String claireExercise = JsonPath.read(read(claireToken, "/api/v1/athletes/" + lucas.getId()
+                + "/performed-exercises"), "$[0].exerciseId");
+        expect404(coachToken, progressionUri(lucas, claireExercise), "EXERCISE_NOT_FOUND");
+        mockMvc.perform(get(progressionUri(lucas, squat)).header(HttpHeaders.AUTHORIZATION, coachToken)
+                        .param("weeks", "5"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PARAMETER"));
+
+        // Records : 120 kg au squat il y a 100 jours ; tractions, 10 répétitions il y a 10 jours.
+        String records = read(coachToken, recordsUri(lucas));
+        assertThat(JsonPath.<List<String>>read(records, "$.records[*].exerciseName"))
+                .containsExactly("Tractions", "Squat barre");
+        assertThat(JsonPath.<Boolean>read(records, "$.records[0].bodyweight")).isTrue();
+        assertThat(JsonPath.<Object>read(records, "$.records[0].loadKg")).isNull();
+        assertThat(JsonPath.<Integer>read(records, "$.records[0].reps")).isEqualTo(10);
+        assertThat(JsonPath.<String>read(records, "$.records[0].plannedSessionId")).isEqualTo(d10);
+        assertThat(JsonPath.<Double>read(records, "$.records[1].loadKg")).isEqualTo(120.0);
+        assertThat(JsonPath.<Integer>read(records, "$.records[1].reps")).isEqualTo(5);
+        assertThat(JsonPath.<String>read(records, "$.records[1].date")).isEqualTo(today.minusDays(100).toString());
+
+        // Correction qui baisse la série du record : recalculé. À 110 × 5, la date la plus ancienne l'emporte.
+        jdbc.update("update performed_set set load_kg = 100.0 where performance_id = ? and load_kg = 120.0",
+                (Object) bytes(d100Performance));
+        String corrected = read(coachToken, recordsUri(lucas));
+        assertThat(JsonPath.<Double>read(corrected, "$.records[1].loadKg")).isEqualTo(110.0);
+        assertThat(JsonPath.<Integer>read(corrected, "$.records[1].reps")).isEqualTo(5);
+        assertThat(JsonPath.<String>read(corrected, "$.records[1].plannedSessionId")).isEqualTo(d20);
+
+        // Claire ne voit que ce que Lucas a fait avec elle.
+        assertThat(JsonPath.<List<String>>read(read(claireToken, recordsUri(lucas)), "$.records[*].exerciseName"))
+                .containsExactly("Fentes");
+
+        // Lien clos : 404, et la séance validée à venir reste (P7).
+        mockMvc.perform(delete("/api/v1/athletes/" + lucas.getId()).header(HttpHeaders.AUTHORIZATION, coachToken))
+                .andExpect(status().isNoContent());
+        expect404(coachToken, recordsUri(lucas), "ATHLETE_NOT_FOUND");
+        expect404(coachToken, "/api/v1/athletes/" + lucas.getId() + "/performed-exercises", "ATHLETE_NOT_FOUND");
+        expect404(coachToken, progressionUri(lucas, squat), "ATHLETE_NOT_FOUND");
+        assertThat(plannedSessionIds()).contains(ahead, drafted);
+    }
+
+    // ---------------------------------------------------------------- US32 tableau de bord
+
+    @Test
+    void theKpisCountOnlyThePastSessionsOfThisCoachForItsFollowedAthletes() throws Exception {
+        User nathan = userService.create("nathan.chevalier@athlete.fr", PASSWORD, "Nathan", "Chevalier", Role.ATHLETE);
+        follow(coach, nathan);
+        // Lucas : 2 réalisées, 1 non faite et 1 brouillon (non faite) dans les 7 derniers jours.
+        validate(plan(coachToken, lucas, strength, today.minusDays(20)), lucas, 8, 4, null, done(8, "60.0"));
+        validate(plan(coachToken, lucas, strength, today.minusDays(10)), lucas, 6, 3, null, done(8, "60.0"));
+        plan(coachToken, lucas, strength, today.minusDays(5));
+        perform(plan(coachToken, lucas, strength, today.minusDays(3)), lucas, "DRAFT", 9, null, null, null, null,
+                done(8, "60.0"));
+        validate(plan(coachToken, lucas, strength, today.minusDays(40)), lucas, 5, 2, null, done(8, "60.0"));
+        // Aujourd'hui et demain ne comptent pas, même réalisées.
+        validate(plan(coachToken, lucas, strength, today), lucas, 10, 5, null, done(8, "60.0"));
+        validate(plan(coachToken, lucas, strength, today.plusDays(1)), lucas, 10, 5, null, done(8, "60.0"));
+        // Emma : 3 réalisées sur 3, dont une sans RPE ; une séance d'aujourd'hui pas encore faite.
+        validate(plan(coachToken, emma, strength, today.minusDays(15)), emma, 7, 3, null, done(8, "60.0"));
+        validate(plan(coachToken, emma, strength, today.minusDays(8)), emma, null, null, null, done(8, "60.0"));
+        validate(plan(coachToken, emma, strength, today.minusDays(1)), emma, 8, 4, null, done(8, "60.0"));
+        plan(coachToken, emma, strength, today);
+        // Hugo : 1 réalisée sur 3, ses non faites sont anciennes.
+        plan(coachToken, hugo, strength, today.minusDays(25));
+        plan(coachToken, hugo, strength, today.minusDays(20));
+        validate(plan(coachToken, hugo, strength, today.minusDays(12)), hugo, 9, 5, null, done(8, "60.0"));
+        // Les séances de Claire avec Lucas ne comptent jamais pour le coach.
+        plan(claireToken, lucas, claireWorkout, today.minusDays(6));
+        validate(plan(claireToken, lucas, claireWorkout, today.minusDays(2)), lucas, 3, 1, null, done(10, "20.0"));
+        // Une séance annulée est supprimée : elle ne comptera jamais, même une fois sa date passée.
+        String cancelled = plan(coachToken, nathan, strength, today);
+        mockMvc.perform(delete(SESSIONS + cancelled).header(HttpHeaders.AUTHORIZATION, coachToken))
+                .andExpect(status().isNoContent());
+
+        String kpis = kpis(Map.of());
+        assertThat(JsonPath.<String>read(kpis, "$.from")).isEqualTo(today.minusDays(28).toString());
+        assertThat(JsonPath.<String>read(kpis, "$.to")).isEqualTo(today.minusDays(1).toString());
+        assertThat(JsonPath.<Integer>read(kpis, "$.weeks")).isEqualTo(4);
+        assertThat(JsonPath.<List<String>>read(kpis, "$.athletes[*].lastName"))
+                .containsExactly("Chevalier", "Fontaine", "Girard", "Lefèvre");
+        assertThat(JsonPath.<List<Integer>>read(kpis, "$.athletes[*].doneCount")).containsExactly(0, 1, 2, 3);
+        assertThat(JsonPath.<List<Integer>>read(kpis, "$.athletes[*].missedCount")).containsExactly(0, 2, 2, 0);
+        assertThat(JsonPath.<List<Integer>>read(kpis, "$.athletes[*].completionRate"))
+                .containsExactly(null, 33, 50, 100);
+        assertThat(JsonPath.<List<Double>>read(kpis, "$.athletes[*].averageRpe")).containsExactly(null, 9.0, 7.0, 7.5);
+        assertThat(JsonPath.<List<Integer>>read(kpis, "$.athletes[*].missedLast7Days")).containsExactly(0, 0, 2, 0);
+        assertThat(JsonPath.<List<Boolean>>read(kpis, "$.athletes[*].watch")).containsExactly(false, true, true, false);
+        assertThat(JsonPath.<Integer>read(kpis, "$.totals.athleteCount")).isEqualTo(4);
+        assertThat(JsonPath.<Integer>read(kpis, "$.totals.doneCount")).isEqualTo(6);
+        assertThat(JsonPath.<Integer>read(kpis, "$.totals.missedCount")).isEqualTo(4);
+        assertThat(JsonPath.<Integer>read(kpis, "$.totals.completionRate")).isEqualTo(60);
+        assertThat(JsonPath.<Double>read(kpis, "$.totals.averageRpe")).isEqualTo(7.6);
+        assertThat(JsonPath.<List<String>>read(kpis, "$.watchlist[*].lastName")).containsExactly("Girard", "Fontaine");
+        assertThat(JsonPath.<List<String>>read(kpis, "$.watchlist[0].reasons"))
+                .containsExactly("MISSED_RECENTLY", "LOW_COMPLETION");
+        assertThat(JsonPath.<List<String>>read(kpis, "$.watchlist[1].reasons")).containsExactly("LOW_COMPLETION");
+
+        // 12 semaines : la séance de Lucas d'il y a 40 jours compte.
+        String quarter = kpis(Map.of("weeks", "12"));
+        assertThat(JsonPath.<Integer>read(quarter, "$.athletes[2].doneCount")).isEqualTo(3);
+        assertThat(JsonPath.<Integer>read(quarter, "$.athletes[2].completionRate")).isEqualTo(60);
+        assertThat(JsonPath.<Double>read(quarter, "$.athletes[2].averageRpe")).isEqualTo(6.3);
+        assertThat(JsonPath.<Integer>read(quarter, "$.totals.completionRate")).isEqualTo(64);
+        assertThat(JsonPath.<Double>read(quarter, "$.totals.averageRpe")).isEqualTo(7.2);
+
+        // Groupe : ses membres seulement.
+        String group = createGroup("Sprint", lucas, emma);
+        String sprint = kpis(Map.of("groupId", group));
+        assertThat(JsonPath.<String>read(sprint, "$.groupId")).isEqualTo(group);
+        assertThat(JsonPath.<List<String>>read(sprint, "$.athletes[*].lastName")).containsExactly("Girard", "Lefèvre");
+        assertThat(JsonPath.<Integer>read(sprint, "$.totals.completionRate")).isEqualTo(71);
+        assertThat(JsonPath.<Double>read(sprint, "$.totals.averageRpe")).isEqualTo(7.3);
+
+        // Groupe d'un autre coach, période inconnue.
+        String claireGroup = JsonPath.read(mockMvc.perform(json(post("/api/v1/groups"), claireToken,
+                        "{\"name\":\"Groupe de Claire\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.id");
+        expect404(coachToken, "/api/v1/dashboard/kpis?groupId=" + claireGroup, "GROUP_NOT_FOUND");
+        mockMvc.perform(get("/api/v1/dashboard/kpis").header(HttpHeaders.AUTHORIZATION, coachToken)
+                        .param("weeks", "8"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PARAMETER"));
+
+        // Lien clos : l'athlète retiré disparaît du tableau de bord.
+        mockMvc.perform(delete("/api/v1/athletes/" + hugo.getId()).header(HttpHeaders.AUTHORIZATION, coachToken))
+                .andExpect(status().isNoContent());
+        assertThat(JsonPath.<List<String>>read(kpis(Map.of()), "$.athletes[*].lastName"))
+                .containsExactly("Chevalier", "Girard", "Lefèvre");
+    }
+
+    private String kpis(Map<String, String> parameters) throws Exception {
+        MockHttpServletRequestBuilder request = get("/api/v1/dashboard/kpis")
+                .header(HttpHeaders.AUTHORIZATION, coachToken);
+        parameters.forEach(request::param);
+        return mockMvc.perform(request)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+    }
+
+    private String read(String token, String uri) throws Exception {
+        return mockMvc.perform(get(uri).header(HttpHeaders.AUTHORIZATION, token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+    }
+
+    private static String progressionUri(User athlete, String exerciseId) {
+        return "/api/v1/athletes/" + athlete.getId() + "/exercises/" + exerciseId + "/progression";
+    }
+
+    private static String recordsUri(User athlete) {
+        return "/api/v1/athletes/" + athlete.getId() + "/personal-records";
+    }
 }
