@@ -11,9 +11,10 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
  * P7 (RM10, Q9) : quand le lien coach-athlète prend fin, les séances à venir (aujourd'hui compris) et non
- * réalisées de ce coach pour cet athlète sont supprimées, puis les instantanés devenus orphelins. Le passé
- * et les séances des autres coachs restent. Exécuté avant le commit de la transaction du retrait : tout est
- * validé ensemble, ou rien. Nom distinct de {@code group.AthleteUnfollowedListener} (sinon collision de bean).
+ * réalisées de ce coach pour cet athlète sont supprimées, puis les instantanés devenus orphelins. Une séance
+ * à réalisation validée reste, même future (RM10 de #7) ; un brouillon part avec sa séance. Le passé et les
+ * séances des autres coachs restent. Exécuté avant le commit de la transaction du retrait : tout est validé
+ * ensemble, ou rien. Nom distinct de {@code group.AthleteUnfollowedListener} (sinon collision de bean).
  */
 @Component
 @RequiredArgsConstructor

@@ -44,8 +44,11 @@ import org.springframework.transaction.annotation.Transactional;
  * les compteurs. Plusieurs séances par athlète et par jour sont permises (Q1) : aucun conflit de date.
  *
  * <p>« Aujourd'hui » vient de {@link PlanningClock} (Europe/Paris, Q12) : une date cible antérieure est
- * refusée (Q5), une séance passée est verrouillée (Q6). Groupe et duplication sont tout-ou-rien (RM9) :
- * tous les contrôles passent avant la première écriture, dans une seule transaction.
+ * refusée (Q5), une séance passée est verrouillée (Q6). Une séance réalisée (réalisation validée, #7) l'est
+ * aussi, même future (RM10 de #7), et chaque séance affichée porte son {@link SessionStatus} : les
+ * réalisations viennent de {@link PlannedSessionCompletion}, en une requête par écran. Groupe et
+ * duplication sont tout-ou-rien (RM9) : tous les contrôles passent avant la première écriture, dans une
+ * seule transaction.
  */
 @Service
 @RequiredArgsConstructor
@@ -66,6 +69,7 @@ public class PlanningService {
     private final AccessGuard accessGuard;
     private final CurrentUser currentUser;
     private final PlanningClock planningClock;
+    private final PlannedSessionCompletion completion;
 
     // ---------------------------------------------------------------- calendriers
 
@@ -77,12 +81,15 @@ public class PlanningService {
         LocalDate today = planningClock.today();
         List<PlannedSessionRow> rows = plannedSessionRepository.findAthleteRows(currentUser.id(), athleteId, from, to);
         Map<UUID, SnapshotCount> counts = countsOf(rows);
+        Set<UUID> done = doneAmong(rows);
         List<PlannedSessionSummary> sessions = rows.stream()
                 .map(row -> {
                     SnapshotCount count = counts.get(row.snapshotId());
+                    boolean isDone = done.contains(row.id());
                     return new PlannedSessionSummary(row.id(), row.athleteId(), row.date(), row.name(),
                             count == null ? 0 : count.exerciseCount(), count == null ? 0 : count.setCount(),
-                            row.groupId(), PlannedSessionRules.isLocked(row.date(), today));
+                            row.groupId(), PlannedSessionRules.isLocked(row.date(), today, isDone),
+                            SessionStatus.of(row.date(), today, isDone));
                 })
                 .toList();
         return new AthleteCalendarResponse(athleteId, from, to, today, sessions);
@@ -110,6 +117,7 @@ public class PlanningService {
         }
         List<PlannedSessionRow> rows = plannedSessionRepository.findGroupRows(currentUser.id(), groupId,
                 byId.keySet(), from, to);
+        Set<UUID> done = doneAmong(rows);
 
         record Key(LocalDate date, UUID snapshotId) {
         }
@@ -125,12 +133,14 @@ public class PlanningService {
                     .map(row -> {
                         GroupMemberRef member = byId.get(row.athleteId());
                         return new GroupCalendarSession(row.id(), row.athleteId(), member.firstName(),
-                                member.lastName());
+                                member.lastName(), SessionStatus.of(row.date(), today, done.contains(row.id())));
                     })
                     .toList();
             int athleteCount = (int) sessions.stream().map(PlannedSessionRow::athleteId).distinct().count();
+            // L'entrée n'est verrouillée en entier que si chacune de ses séances l'est (jour passé ou toutes réalisées).
+            boolean allDone = sessions.stream().allMatch(row -> done.contains(row.id()));
             entries.add(new GroupCalendarEntry(key.date(), key.snapshotId(), sessions.getFirst().name(),
-                    athleteCount, members.size(), PlannedSessionRules.isLocked(key.date(), today),
+                    athleteCount, members.size(), PlannedSessionRules.isLocked(key.date(), today, allDone),
                     calendarSessions));
         });
         entries.sort(Comparator.comparing(GroupCalendarEntry::date)
@@ -139,13 +149,15 @@ public class PlanningService {
         return new GroupCalendarResponse(groupId, from, to, today, members.size(), entries);
     }
 
-    /** Nombre de séances que supprimerait le retrait de cet athlète (même définition que P7). */
+    /**
+     * Nombre de séances que supprimerait le retrait de cet athlète (même définition que P7) : à venir,
+     * aujourd'hui compris, sans réalisation validée (#7).
+     */
     @Transactional(readOnly = true)
     public UpcomingCountResponse upcomingCount(UUID athleteId) {
         accessGuard.assertCoachOfAthlete(athleteId);
-        return new UpcomingCountResponse(plannedSessionRepository
-                .countByCoachIdAndAthleteIdAndScheduledDateGreaterThanEqual(currentUser.id(), athleteId,
-                        planningClock.today()));
+        return new UpcomingCountResponse(plannedSessionRepository.countUpcoming(currentUser.id(), athleteId,
+                planningClock.today()));
     }
 
     // ---------------------------------------------------------------- planifier
@@ -171,7 +183,8 @@ public class PlanningService {
                 .snapshot(snapshot)
                 .sourceWorkoutId(workout.id())
                 .build());
-        return detail(plannedSession, snapshot, today);
+        // Une séance qui vient d'être planifiée n'a pas encore de réalisation.
+        return detail(plannedSession, snapshot, today, false);
     }
 
     /**
@@ -216,19 +229,20 @@ public class PlanningService {
     public PlannedSessionDetailResponse get(UUID plannedSessionId) {
         accessGuard.assertPlannedSessionOwner(plannedSessionId);
         PlannedSession plannedSession = loadOwn(plannedSessionId);
-        return detail(plannedSession, loadSnapshot(plannedSession), planningClock.today());
+        return detail(plannedSession, loadSnapshot(plannedSession), planningClock.today(), isDone(plannedSessionId));
     }
 
     /**
      * US25 : seule la date change (Q13), le contenu et le groupe restent. Contrôles dans l'ordre : séance
-     * (404), verrouillée (409), date cible passée (409). La même date répond 200 sans rien changer.
+     * (404), verrouillée (409 : passée ou réalisée, même future), date cible passée (409). La même date
+     * répond 200 sans rien changer.
      */
     @Transactional
     public PlannedSessionDetailResponse move(UUID plannedSessionId, MovePlannedSessionRequest request) {
         accessGuard.assertPlannedSessionOwner(plannedSessionId);
         PlannedSession plannedSession = loadOwn(plannedSessionId);
         LocalDate today = planningClock.today();
-        if (PlannedSessionRules.isLocked(plannedSession, today)) {
+        if (PlannedSessionRules.isLocked(plannedSession.getScheduledDate(), today, isDone(plannedSessionId))) {
             throw PlanningErrors.plannedSessionLocked();
         }
         if (request.date().isBefore(today)) {
@@ -238,18 +252,21 @@ public class PlanningService {
             plannedSession.setScheduledDate(request.date());
             plannedSessionRepository.flush();
         }
-        return detail(plannedSession, loadSnapshot(plannedSession), today);
+        // Non verrouillée, donc non réalisée.
+        return detail(plannedSession, loadSnapshot(plannedSession), today, false);
     }
 
     /**
      * US25, Q7 : annuler supprime la séance planifiée (le jour n'est pas compté comme manqué), puis son
-     * instantané s'il n'est plus partagé. Une séance passée ou réalisée ne s'annule pas (409).
+     * instantané s'il n'est plus partagé. Une séance passée ou réalisée, même future, ne s'annule pas (409) ;
+     * un brouillon de réalisation part avec sa séance (CASCADE).
      */
     @Transactional
     public void cancel(UUID plannedSessionId) {
         accessGuard.assertPlannedSessionOwner(plannedSessionId);
         PlannedSession plannedSession = loadOwn(plannedSessionId);
-        if (PlannedSessionRules.isLocked(plannedSession, planningClock.today())) {
+        if (PlannedSessionRules.isLocked(plannedSession.getScheduledDate(), planningClock.today(),
+                isDone(plannedSessionId))) {
             throw PlanningErrors.plannedSessionLocked();
         }
         UUID snapshotId = plannedSession.getSnapshot().getId();
@@ -388,10 +405,25 @@ public class PlanningService {
     }
 
     private PlannedSessionDetailResponse detail(PlannedSession plannedSession, SessionSnapshot snapshot,
-                                                LocalDate today) {
+                                                LocalDate today, boolean done) {
         UUID athleteId = plannedSession.getAthlete().getId();
         UserName athlete = userService.findNames(List.of(athleteId)).get(athleteId);
-        return mapper.toDetail(plannedSession, snapshot, athlete, PlannedSessionRules.isLocked(plannedSession, today));
+        LocalDate date = plannedSession.getScheduledDate();
+        return mapper.toDetail(plannedSession, snapshot, athlete, PlannedSessionRules.isLocked(date, today, done),
+                SessionStatus.of(date, today, done));
+    }
+
+    /** Vrai si cette séance planifiée a une réalisation validée (#7). */
+    private boolean isDone(UUID plannedSessionId) {
+        return completion.findValidated(List.of(plannedSessionId)).contains(plannedSessionId);
+    }
+
+    /** Séances réalisées parmi ces lignes de calendrier, en une requête pour tout l'écran. */
+    private Set<UUID> doneAmong(List<PlannedSessionRow> rows) {
+        if (rows.isEmpty()) {
+            return Set.of();
+        }
+        return completion.findValidated(rows.stream().map(PlannedSessionRow::id).toList());
     }
 
     private Map<UUID, SnapshotCount> countsOf(List<PlannedSessionRow> rows) {

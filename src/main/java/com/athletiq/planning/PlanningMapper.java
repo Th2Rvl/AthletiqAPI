@@ -33,9 +33,9 @@ public interface PlanningMapper {
                 .toList();
     }
 
-    /** Le nom de l'athlète et le verrouillage sont calculés par le service et passés en paramètres. */
+    /** Le nom de l'athlète, le verrouillage et le statut sont calculés par le service et passés en paramètres. */
     default PlannedSessionDetailResponse toDetail(PlannedSession plannedSession, SessionSnapshot snapshot,
-                                                  UserName athlete, boolean locked) {
+                                                  UserName athlete, boolean locked, SessionStatus status) {
         return new PlannedSessionDetailResponse(
                 plannedSession.getId(),
                 plannedSession.getAthlete().getId(),
@@ -45,6 +45,7 @@ public interface PlanningMapper {
                 plannedSession.getGroupId(),
                 plannedSession.getSourceWorkoutId(),
                 locked,
+                status,
                 snapshot.getName(),
                 snapshot.getDescription(),
                 toExerciseResponses(snapshot.getExercises()),

@@ -67,21 +67,41 @@ public interface PlannedSessionRepository extends JpaRepository<PlannedSession, 
     /** Données de démonstration (profil dev) : ce coach a-t-il déjà planifié quelque chose ? */
     boolean existsByCoachId(UUID coachId);
 
-    /** Séances de ce coach pour cet athlète à partir de ce jour inclus (confirmation de retrait, P7). */
-    long countByCoachIdAndAthleteIdAndScheduledDateGreaterThanEqual(UUID coachId, UUID athleteId, LocalDate from);
+    /*
+     * P7 (#3, RM10 de #7) : les trois requêtes suivantes partagent la même définition, « séances de ce coach pour
+     * cet athlète à partir de ce jour inclus, sans réalisation validée ». Le « not exists » nomme l'entité de
+     * performance dans le JPQL seulement : aucune dépendance de compilation de planning vers performance.
+     */
+
+    /** Séances que supprimerait le retrait de cet athlète (confirmation de retrait, même définition que P7). */
+    @Query("""
+            select count(ps) from PlannedSession ps
+            where ps.coach.id = :coachId and ps.athlete.id = :athleteId and ps.scheduledDate >= :from
+              and not exists (select sp.id from SessionPerformance sp where sp.plannedSession = ps
+                              and sp.status = com.athletiq.performance.PerformanceStatus.VALIDATED)
+            """)
+    long countUpcoming(@Param("coachId") UUID coachId, @Param("athleteId") UUID athleteId,
+                       @Param("from") LocalDate from);
 
     @Query("""
             select distinct ps.snapshot.id from PlannedSession ps
             where ps.coach.id = :coachId and ps.athlete.id = :athleteId and ps.scheduledDate >= :from
+              and not exists (select sp.id from SessionPerformance sp where sp.plannedSession = ps
+                              and sp.status = com.athletiq.performance.PerformanceStatus.VALIDATED)
             """)
     List<UUID> findUpcomingSnapshotIds(@Param("coachId") UUID coachId, @Param("athleteId") UUID athleteId,
                                        @Param("from") LocalDate from);
 
-    /** P7 : supprime les séances de ce coach pour cet athlète à partir de ce jour inclus ; passé et autres coachs intacts. */
+    /**
+     * P7 : supprime les séances de ce coach pour cet athlète à partir de ce jour inclus, sauf celles dont la
+     * réalisation est validée ; passé et autres coachs intacts. Un brouillon part avec sa séance (CASCADE).
+     */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
             delete from PlannedSession ps
             where ps.coach.id = :coachId and ps.athlete.id = :athleteId and ps.scheduledDate >= :from
+              and not exists (select sp.id from SessionPerformance sp where sp.plannedSession = ps
+                              and sp.status = com.athletiq.performance.PerformanceStatus.VALIDATED)
             """)
     int deleteUpcoming(@Param("coachId") UUID coachId, @Param("athleteId") UUID athleteId,
                        @Param("from") LocalDate from);
