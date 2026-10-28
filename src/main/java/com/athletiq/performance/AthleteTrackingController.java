@@ -2,7 +2,7 @@ package com.athletiq.performance;
 
 import com.athletiq.performance.dto.AthleteKpisResponse;
 import com.athletiq.performance.dto.PerformedExerciseResponse;
-import com.athletiq.performance.dto.PersonalRecordsResponse;
+import com.athletiq.performance.dto.AthletePersonalRecordsResponse;
 import com.athletiq.performance.dto.ProgressionResponse;
 import com.athletiq.performance.dto.SessionHistoryFilter;
 import com.athletiq.performance.dto.SessionHistoryItem;
@@ -49,7 +49,7 @@ public class AthleteTrackingController {
     }
 
     @GetMapping("/personal-records")
-    public PersonalRecordsResponse personalRecords() {
+    public AthletePersonalRecordsResponse personalRecords() {
         return service.personalRecords();
     }
 
@@ -65,9 +65,9 @@ public class AthleteTrackingController {
         return service.progression(exerciseId, weeks);
     }
 
-    /** {@code weeks} : 4 (par défaut) ou 12. */
+    /** {@code days} : 30 (par défaut) ou 90. */
     @GetMapping("/kpis")
-    public AthleteKpisResponse kpis(@RequestParam(defaultValue = "4") int weeks) {
-        return service.kpis(weeks);
+    public AthleteKpisResponse kpis(@RequestParam(defaultValue = "30") int days) {
+        return service.kpis(days);
     }
 }

@@ -1,9 +1,12 @@
 package com.athletiq.performance;
 
+import com.athletiq.planning.CompletionSummary;
 import com.athletiq.planning.PlannedSessionCompletion;
 import java.util.Collection;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,5 +28,16 @@ class PlannedSessionCompletionAdapter implements PlannedSessionCompletion {
             return Set.of();
         }
         return Set.copyOf(performanceRepository.findValidatedPlannedSessionIds(plannedSessionIds));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<UUID, CompletionSummary> summarize(Collection<UUID> plannedSessionIds) {
+        if (plannedSessionIds.isEmpty()) {
+            return Map.of();
+        }
+        return performanceRepository.summarizeValidated(plannedSessionIds).stream()
+                .collect(Collectors.toMap(CompletionRow::plannedSessionId, row -> new CompletionSummary(row.rpe(),
+                        Math.toIntExact(row.doneSetCount()), row.commented() > 0)));
     }
 }

@@ -13,7 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.athletiq.athlete.AthleteErrors;
 import com.athletiq.common.exception.InvalidParameterException;
 import com.athletiq.performance.dto.AthleteKpisResponse;
-import com.athletiq.performance.dto.PersonalRecordsResponse;
+import com.athletiq.performance.dto.AthletePersonalRecordsResponse;
 import com.athletiq.support.WebSecurityTestConfig;
 import com.athletiq.user.Role;
 import java.time.LocalDate;
@@ -78,10 +78,10 @@ class AthleteTrackingControllerTest {
 
     @Test
     void usesTheDocumentedDefaultPeriods() throws Exception {
-        when(service.kpis(4)).thenReturn(new AthleteKpisResponse(LocalDate.of(2026, 10, 28), LocalDate.of(2026, 9, 30),
-                LocalDate.of(2026, 10, 27), 4, 3, 2, 60, new java.math.BigDecimal("7.0"), 7, 2));
+        when(service.kpis(30)).thenReturn(new AthleteKpisResponse(LocalDate.of(2026, 10, 28), LocalDate.of(2026, 9, 28),
+                LocalDate.of(2026, 10, 27), 30, 3, 2, 60, new java.math.BigDecimal("7.0"), 7, 2));
         when(service.progression(eq(ID), eq(12))).thenThrow(new InvalidParameterException("weeks"));
-        when(service.personalRecords()).thenReturn(new PersonalRecordsResponse(ID, List.of()));
+        when(service.personalRecords()).thenReturn(new AthletePersonalRecordsResponse(ID, List.of()));
 
         mockMvc.perform(get("/api/v1/me/kpis").with(as(Role.ATHLETE)))
                 .andExpect(status().isOk())
@@ -98,7 +98,7 @@ class AthleteTrackingControllerTest {
 
     @Test
     void mapsTheNoCoachRefusal() throws Exception {
-        when(service.kpis(4)).thenThrow(AthleteErrors.athleteWithoutCoach());
+        when(service.kpis(30)).thenThrow(AthleteErrors.athleteWithoutCoach());
 
         mockMvc.perform(get("/api/v1/me/kpis").with(as(Role.ATHLETE)))
                 .andExpect(status().isForbidden())

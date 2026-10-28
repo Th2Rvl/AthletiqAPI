@@ -57,6 +57,19 @@ public interface SessionPerformanceRepository extends JpaRepository<SessionPerfo
             """)
     List<SessionSnapshotSet> findPlannedSets(@Param("plannedSessionId") UUID plannedSessionId);
 
+    /** Port {@code planning.PlannedSessionCompletion} : RPE, séries faites et commentaire des séances réalisées. */
+    @Query("""
+            select new com.athletiq.performance.CompletionRow(sp.plannedSession.id, sp.rpe,
+                   sum(case when pf.reps is not null then 1L else 0L end),
+                   max(case when sp.comment is not null then 1L else 0L end))
+            from SessionPerformance sp
+            left join PerformedSet pf on pf.performance = sp
+            where sp.plannedSession.id in :plannedSessionIds
+              and sp.status = com.athletiq.performance.PerformanceStatus.VALIDATED
+            group by sp.plannedSession.id, sp.rpe
+            """)
+    List<CompletionRow> summarizeValidated(@Param("plannedSessionIds") Collection<UUID> plannedSessionIds);
+
     /** Données de démonstration (profil dev) : ce coach a-t-il déjà des réalisations sur ses séances ? */
     boolean existsByPlannedSessionCoachId(UUID coachId);
 

@@ -5,6 +5,7 @@ import static com.athletiq.support.TestEntities.withId;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -67,6 +68,7 @@ class AthletePlanningServiceTest {
         coach = user("coach@club.fr", Role.COACH);
         org.mockito.Mockito.lenient().when(currentUser.id()).thenReturn(athlete.getId());
         org.mockito.Mockito.lenient().when(completion.findValidated(any())).thenReturn(java.util.Set.of());
+        org.mockito.Mockito.lenient().when(completion.summarize(any())).thenReturn(java.util.Map.of());
     }
 
     private AthleteSessionRow row(LocalDate date, UUID snapshotId) {
@@ -75,14 +77,14 @@ class AthletePlanningServiceTest {
     }
 
     @Test
-    void todayListsTheSessionsOfTheDayWithTheirCounts() {
+    void calendarListsTheSessionsWithTheirCounts() {
         UUID snapshotId = UUID.randomUUID();
         when(plannedSessionRepository.findOwnRows(athlete.getId(), TODAY, TODAY))
                 .thenReturn(List.of(row(TODAY, snapshotId)));
         when(snapshotExerciseRepository.countBySnapshot(any()))
                 .thenReturn(List.of(new SnapshotCount(snapshotId, 2, 7)));
 
-        AthleteSessionListResponse response = service.today();
+        AthleteSessionListResponse response = service.calendar(TODAY, TODAY);
 
         assertThat(response.today()).isEqualTo(TODAY);
         assertThat(response.sessions()).singleElement().satisfies(session -> {
@@ -90,8 +92,75 @@ class AthletePlanningServiceTest {
             assertThat(session.setCount()).isEqualTo(7);
             assertThat(session.status()).isEqualTo(SessionStatus.UPCOMING);
             assertThat(session.coachLastName()).isEqualTo("Petit");
+            assertThat(session.rpe()).isNull();
+            assertThat(session.doneSetCount()).isNull();
         });
         verify(accessGuard).assertAthleteWithCoach();
+    }
+
+    @Test
+    void aDoneSessionCarriesItsRpeDoneSetsAndComment() {
+        UUID snapshotId = UUID.randomUUID();
+        AthleteSessionRow done = row(TODAY.minusDays(1), snapshotId);
+        when(plannedSessionRepository.findOwnRows(athlete.getId(), TODAY.minusDays(7), TODAY))
+                .thenReturn(List.of(done));
+        when(snapshotExerciseRepository.countBySnapshot(any())).thenReturn(List.of(new SnapshotCount(snapshotId, 4, 14)));
+        when(completion.summarize(any())).thenReturn(java.util.Map.of(done.id(), new CompletionSummary(8, 13, true)));
+
+        assertThat(service.calendar(TODAY.minusDays(7), TODAY).sessions()).singleElement().satisfies(session -> {
+            assertThat(session.status()).isEqualTo(SessionStatus.DONE);
+            assertThat(session.rpe()).isEqualTo(8);
+            assertThat(session.doneSetCount()).isEqualTo(13);
+            assertThat(session.setCount()).isEqualTo(14);
+            assertThat(session.hasComment()).isTrue();
+        });
+    }
+
+    @Test
+    void theHomeHasTheTodaySessionsInDetailTheNextSessionAndTheLastDoneOne() {
+        UUID snapshotId = UUID.randomUUID();
+        SessionSnapshot snapshot = withId(SessionSnapshot.builder().coach(coach).name("Bas du corps").build(), snapshotId);
+        PlannedSession planned = withId(PlannedSession.builder().coach(coach).athlete(athlete).scheduledDate(TODAY)
+                .snapshot(snapshot).build(), UUID.randomUUID());
+        AthleteSessionRow todayRow = new AthleteSessionRow(planned.getId(), TODAY, snapshotId, "Bas du corps",
+                coach.getId(), "Nicolas", "Petit", NOW);
+        AthleteSessionRow nextRow = row(TODAY.plusDays(2), UUID.randomUUID());
+        AthleteSessionRow lastRow = row(TODAY.minusDays(1), UUID.randomUUID());
+        when(plannedSessionRepository.findOwnRows(athlete.getId(), TODAY, TODAY)).thenReturn(List.of(todayRow));
+        when(plannedSessionRepository.findOwnById(planned.getId(), athlete.getId())).thenReturn(Optional.of(planned));
+        when(snapshotRepository.findDetailById(snapshotId)).thenReturn(Optional.of(snapshot));
+        when(plannedSessionRepository.findOwnRowsAfter(eq(athlete.getId()), eq(TODAY), any()))
+                .thenReturn(List.of(nextRow));
+        when(snapshotExerciseRepository.findNamesBySnapshot(nextRow.snapshotId()))
+                .thenReturn(List.of("Développé couché", "Curl"));
+        when(plannedSessionRepository.findOwnRows(athlete.getId(), TODAY.minusDays(28), TODAY))
+                .thenReturn(List.of(lastRow, todayRow));
+        when(completion.summarize(any())).thenReturn(java.util.Map.of(lastRow.id(), new CompletionSummary(8, 13, true)));
+        when(snapshotExerciseRepository.countBySnapshot(any()))
+                .thenReturn(List.of(new SnapshotCount(lastRow.snapshotId(), 4, 14)));
+
+        var home = service.today();
+
+        assertThat(home.today()).isEqualTo(TODAY);
+        assertThat(home.sessions()).extracting(s -> s.name()).containsExactly("Bas du corps");
+        assertThat(home.next().exerciseNames()).containsExactly("Développé couché", "Curl");
+        assertThat(home.next().date()).isEqualTo(TODAY.plusDays(2));
+        assertThat(home.last().id()).isEqualTo(lastRow.id());
+        assertThat(home.last().rpe()).isEqualTo(8);
+        assertThat(home.last().doneSetCount()).isEqualTo(13);
+        assertThat(home.last().setCount()).isEqualTo(14);
+    }
+
+    @Test
+    void theHomeIsEmptyWithoutAnySession() {
+        when(plannedSessionRepository.findOwnRows(any(), any(), any())).thenReturn(List.of());
+        when(plannedSessionRepository.findOwnRowsAfter(any(), any(), any())).thenReturn(List.of());
+
+        var home = service.today();
+
+        assertThat(home.sessions()).isEmpty();
+        assertThat(home.next()).isNull();
+        assertThat(home.last()).isNull();
     }
 
     @Test
@@ -116,7 +185,8 @@ class AthletePlanningServiceTest {
         when(plannedSessionRepository.findOwnRows(athlete.getId(), TODAY.minusDays(7), TODAY.plusDays(7)))
                 .thenReturn(List.of(past, future));
         when(snapshotExerciseRepository.countBySnapshot(any())).thenReturn(List.of());
-        when(completion.findValidated(any())).thenReturn(java.util.Set.of(past.id(), future.id()));
+        when(completion.summarize(any())).thenReturn(java.util.Map.of(past.id(), new CompletionSummary(null, 5, false),
+                future.id(), new CompletionSummary(7, 5, false)));
 
         assertThat(service.calendar(TODAY.minusDays(7), TODAY.plusDays(7)).sessions())
                 .extracting(s -> s.status()).containsOnly(SessionStatus.DONE);
@@ -136,6 +206,7 @@ class AthletePlanningServiceTest {
         doThrow(AthleteErrors.athleteWithoutCoach()).when(accessGuard).assertAthleteWithCoach();
 
         assertThatThrownBy(() -> service.today()).isInstanceOf(ForbiddenActionException.class);
+        assertThatThrownBy(() -> service.calendar(TODAY, TODAY)).isInstanceOf(ForbiddenActionException.class);
         assertThatThrownBy(() -> service.get(UUID.randomUUID())).isInstanceOf(ForbiddenActionException.class);
         verifyNoInteractions(plannedSessionRepository);
     }

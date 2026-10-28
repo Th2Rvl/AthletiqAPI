@@ -13,6 +13,9 @@ import com.athletiq.athlete.AthleteErrors;
 import com.athletiq.planning.dto.AthleteSessionDetailResponse;
 import com.athletiq.planning.dto.AthleteSessionListResponse;
 import com.athletiq.planning.dto.AthleteSessionSummary;
+import com.athletiq.planning.dto.AthleteTodayResponse;
+import com.athletiq.planning.dto.LastSessionResponse;
+import com.athletiq.planning.dto.UpcomingSessionResponse;
 import com.athletiq.support.WebSecurityTestConfig;
 import com.athletiq.user.Role;
 import java.time.LocalDate;
@@ -53,16 +56,32 @@ class AthletePlanningControllerTest {
     }
 
     @Test
-    void returnsTodaySessions() throws Exception {
-        when(service.today()).thenReturn(new AthleteSessionListResponse(TODAY, TODAY, TODAY, List.of(
-                new AthleteSessionSummary(ID, TODAY, "Haut du corps A", 2, 7, ID, "Nicolas", "Petit",
-                        SessionStatus.UPCOMING))));
+    void returnsTheHomeWithTodayNextAndLastSessions() throws Exception {
+        when(service.today()).thenReturn(new AthleteTodayResponse(TODAY,
+                List.of(new AthleteSessionDetailResponse(ID, TODAY, TODAY, "Bas du corps", "Descente contrôlée", ID,
+                        "Sophie", "Garnier", SessionStatus.UPCOMING, List.of())),
+                new UpcomingSessionResponse(ID, TODAY.plusDays(2), "Haut du corps", List.of("Développé couché", "Curl")),
+                new LastSessionResponse(ID, TODAY.minusDays(1), "Force", 8, 13, 14, true)));
 
         mockMvc.perform(get("/api/v1/me/planned-sessions/today").with(as(Role.ATHLETE)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.today").value("2026-10-28"))
-                .andExpect(jsonPath("$.sessions[0].name").value("Haut du corps A"))
-                .andExpect(jsonPath("$.sessions[0].status").value("UPCOMING"));
+                .andExpect(jsonPath("$.sessions[0].name").value("Bas du corps"))
+                .andExpect(jsonPath("$.sessions[0].description").value("Descente contrôlée"))
+                .andExpect(jsonPath("$.next.exerciseNames[1]").value("Curl"))
+                .andExpect(jsonPath("$.last.doneSetCount").value(13))
+                .andExpect(jsonPath("$.last.hasComment").value(true));
+    }
+
+    @Test
+    void returnsAnEmptyHome() throws Exception {
+        when(service.today()).thenReturn(new AthleteTodayResponse(TODAY, List.of(), null, null));
+
+        mockMvc.perform(get("/api/v1/me/planned-sessions/today").with(as(Role.ATHLETE)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessions").isEmpty())
+                .andExpect(jsonPath("$.next").doesNotExist())
+                .andExpect(jsonPath("$.last").doesNotExist());
     }
 
     @Test

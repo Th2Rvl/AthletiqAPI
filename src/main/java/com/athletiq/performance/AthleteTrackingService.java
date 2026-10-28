@@ -5,9 +5,10 @@ import com.athletiq.common.security.AccessGuard;
 import com.athletiq.common.security.CurrentUser;
 import com.athletiq.exercise.ExerciseErrors;
 import com.athletiq.performance.dto.AthleteKpisResponse;
+import com.athletiq.performance.dto.AthletePersonalRecord;
+import com.athletiq.performance.dto.AthletePersonalRecordsResponse;
 import com.athletiq.performance.dto.PerformedExerciseResponse;
 import com.athletiq.performance.dto.PersonalRecord;
-import com.athletiq.performance.dto.PersonalRecordsResponse;
 import com.athletiq.performance.dto.ProgressionPoint;
 import com.athletiq.performance.dto.ProgressionResponse;
 import com.athletiq.performance.dto.SessionHistoryFilter;
@@ -34,6 +35,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class AthleteTrackingService {
 
+    /** Périodes d'assiduité proposées, en jours : 30 (par défaut) ou 90. */
+    static final java.util.Set<Integer> KPI_DAYS = java.util.Set.of(30, 90);
+
     private final AthleteTrackingRepository repository;
     private final PerformanceMapper mapper;
     private final AccessGuard accessGuard;
@@ -53,19 +57,29 @@ public class AthleteTrackingService {
                 .map(row -> mapper.toHistoryItem(row, SessionStatus.of(row.date(), today, row.done())));
     }
 
-    /** US16 : un record par exercice réalisé, toutes périodes, recalculé à chaque lecture. */
+    /** US16 : un record par exercice réalisé, toutes périodes, avec le record qu'il a battu. */
     @Transactional(readOnly = true)
-    public PersonalRecordsResponse personalRecords() {
+    public AthletePersonalRecordsResponse personalRecords() {
         accessGuard.assertAthleteWithCoach();
         UUID athleteId = currentUser.id();
-        List<PersonalRecord> records = PerformanceService.byExercise(repository.findPerformedSetGroups(athleteId))
+        List<AthletePersonalRecord> records = PerformanceService.byExercise(repository.findPerformedSetGroups(athleteId))
                 .values().stream()
-                .map(PerformanceService::personalRecord)
-                .sorted(Comparator.comparing((PersonalRecord record) -> record.muscleGroup().name())
-                        .thenComparing(PersonalRecord::exerciseName, PerformanceService.NAME_ORDER)
-                        .thenComparing(PersonalRecord::exerciseId))
+                .map(AthleteTrackingService::withPrevious)
+                .sorted(Comparator.comparing((AthletePersonalRecord record) -> record.muscleGroup().name())
+                        .thenComparing(AthletePersonalRecord::exerciseName, PerformanceService.NAME_ORDER)
+                        .thenComparing(AthletePersonalRecord::exerciseId))
                 .toList();
-        return new PersonalRecordsResponse(athleteId, records);
+        return new AthletePersonalRecordsResponse(athleteId, records);
+    }
+
+    /** Le record, et le meilleur résultat des séances strictement antérieures à la sienne (celui qu'il a battu). */
+    private static AthletePersonalRecord withPrevious(List<PerformedSetGroupRow> rows) {
+        PersonalRecord best = PerformanceService.personalRecord(rows);
+        List<PerformedSetGroupRow> before = rows.stream().filter(row -> row.date().isBefore(best.date())).toList();
+        PersonalRecord previous = before.isEmpty() ? null : PerformanceService.personalRecord(before);
+        return new AthletePersonalRecord(best.exerciseId(), best.exerciseName(), best.muscleGroup(), best.bodyweight(),
+                best.loadKg(), best.reps(), best.date(), best.plannedSessionId(),
+                previous == null ? null : previous.loadKg(), previous == null ? null : previous.reps());
     }
 
     /** US17 : exercices réalisés au moins une fois, pour choisir celui dont on suit la progression. */
@@ -110,22 +124,22 @@ public class AthleteTrackingService {
                 weeks, from, today, points);
     }
 
-    /** US18 : assiduité sur 4 ou 12 semaines glissantes, aujourd'hui exclu. */
+    /** US18 : assiduité sur les 30 ou 90 derniers jours, aujourd'hui exclu. */
     @Transactional(readOnly = true)
-    public AthleteKpisResponse kpis(int weeks) {
-        if (!KpiService.WEEKS.contains(weeks)) {
+    public AthleteKpisResponse kpis(int days) {
+        if (!KPI_DAYS.contains(days)) {
             throw new InvalidParameterException("weeks");
         }
         accessGuard.assertAthleteWithCoach();
         LocalDate today = planningClock.today();
-        LocalDate from = today.minusWeeks(weeks);
+        LocalDate from = today.minusDays(days);
         LocalDate to = today.minusDays(1);
         int recentDays = kpiProperties.missedDays();
         AthleteKpiRow row = repository.aggregateKpi(currentUser.id(), from, to, today.minusDays(recentDays)).orElse(null);
         int done = row == null ? 0 : Math.toIntExact(row.doneCount());
         int missed = row == null ? 0 : Math.toIntExact(row.missedCount());
         long rpeSum = row == null || row.rpeSum() == null ? 0 : row.rpeSum();
-        return new AthleteKpisResponse(today, from, to, weeks, done, missed,
+        return new AthleteKpisResponse(today, from, to, days, done, missed,
                 PerformanceMath.completionRate(done, missed),
                 PerformanceMath.average(rpeSum, row == null ? 0 : row.rpeCount()),
                 recentDays, row == null ? 0 : Math.toIntExact(row.missedRecently()));
