@@ -89,7 +89,7 @@ class PlanningControllerTest {
 
     private static PlannedSessionDetailResponse detail(LocalDate date) {
         return new PlannedSessionDetailResponse(SESSION_ID, ATHLETE_ID, "Lucas", "Girard", date, null, WORKOUT_ID,
-                false, "Haut du corps A", null, List.of(new WorkoutExerciseResponse(0,
+                false, SessionStatus.UPCOMING, "Haut du corps A", null, List.of(new WorkoutExerciseResponse(0,
                 new ExerciseRef(EXERCISE_ID, "Développé couché", MuscleGroup.PECTORAUX), "Tempo 3-1-1",
                 List.of(new PlannedSetResponse(0, 8, new BigDecimal("60.0"), 90),
                         new PlannedSetResponse(1, 8, null, null)))), NOW, NOW);
@@ -140,6 +140,7 @@ class PlanningControllerTest {
                 .andExpect(jsonPath("$.athleteFirstName").value("Lucas"))
                 .andExpect(jsonPath("$.groupId").isEmpty())
                 .andExpect(jsonPath("$.locked").value(false))
+                .andExpect(jsonPath("$.status").value("UPCOMING"))
                 .andExpect(jsonPath("$.exercises[0].exercise.name").value("Développé couché"))
                 .andExpect(jsonPath("$.exercises[0].exercise.muscleGroup").value("PECTORAUX"))
                 .andExpect(jsonPath("$.exercises[0].sets[0].loadKg").value(60.0))
@@ -231,9 +232,10 @@ class PlanningControllerTest {
         LocalDate to = LocalDate.of(2026, 11, 29);
         when(planningService.athleteCalendar(ATHLETE_ID, from, to)).thenReturn(new AthleteCalendarResponse(ATHLETE_ID,
                 from, to, TODAY, List.of(
-                new PlannedSessionSummary(SESSION_ID, ATHLETE_ID, DATE, "Haut du corps A", 5, 15, null, false),
+                new PlannedSessionSummary(SESSION_ID, ATHLETE_ID, DATE, "Haut du corps A", 5, 15, null, false,
+                        SessionStatus.UPCOMING),
                 new PlannedSessionSummary(UUID.randomUUID(), ATHLETE_ID, DATE, "Bas du corps A", 2, 6, GROUP_ID,
-                        false))));
+                        true, SessionStatus.DONE))));
 
         mockMvc.perform(get(ATHLETE_SESSIONS).with(as(Role.COACH)).param("from", "2026-11-02").param("to", "2026-11-29"))
                 .andExpect(status().isOk())
@@ -244,6 +246,9 @@ class PlanningControllerTest {
                 .andExpect(jsonPath("$.sessions[0].exerciseCount").value(5))
                 .andExpect(jsonPath("$.sessions[0].setCount").value(15))
                 .andExpect(jsonPath("$.sessions[0].locked").value(false))
+                .andExpect(jsonPath("$.sessions[0].status").value("UPCOMING"))
+                .andExpect(jsonPath("$.sessions[1].locked").value(true))
+                .andExpect(jsonPath("$.sessions[1].status").value("DONE"))
                 .andExpect(jsonPath("$.sessions[1].groupId").value(GROUP_ID.toString()));
     }
 
@@ -278,7 +283,7 @@ class PlanningControllerTest {
         LocalDate to = LocalDate.of(2026, 11, 29);
         when(planningService.groupCalendar(GROUP_ID, from, to)).thenReturn(new GroupCalendarResponse(GROUP_ID, from,
                 to, TODAY, 4, List.of(new GroupCalendarEntry(DATE, SNAPSHOT_ID, "Haut du corps A", 3, 4, false,
-                List.of(new GroupCalendarSession(SESSION_ID, ATHLETE_ID, "Lucas", "Durand"))))));
+                List.of(new GroupCalendarSession(SESSION_ID, ATHLETE_ID, "Lucas", "Durand", SessionStatus.DONE))))));
 
         mockMvc.perform(get(GROUP_SESSIONS).with(as(Role.COACH)).param("from", "2026-11-02").param("to", "2026-11-29"))
                 .andExpect(status().isOk())
@@ -286,7 +291,8 @@ class PlanningControllerTest {
                 .andExpect(jsonPath("$.entries[0].snapshotId").value(SNAPSHOT_ID.toString()))
                 .andExpect(jsonPath("$.entries[0].athleteCount").value(3))
                 .andExpect(jsonPath("$.entries[0].memberCount").value(4))
-                .andExpect(jsonPath("$.entries[0].sessions[0].lastName").value("Durand"));
+                .andExpect(jsonPath("$.entries[0].sessions[0].lastName").value("Durand"))
+                .andExpect(jsonPath("$.entries[0].sessions[0].status").value("DONE"));
     }
 
     @Test

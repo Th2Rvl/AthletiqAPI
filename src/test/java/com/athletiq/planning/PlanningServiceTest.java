@@ -30,9 +30,12 @@ import com.athletiq.planning.dto.AthleteCalendarResponse;
 import com.athletiq.planning.dto.CreatePlannedSessionRequest;
 import com.athletiq.planning.dto.CreatedCountResponse;
 import com.athletiq.planning.dto.DuplicateWeekRequest;
+import com.athletiq.planning.dto.GroupCalendarEntry;
 import com.athletiq.planning.dto.GroupCalendarResponse;
+import com.athletiq.planning.dto.GroupCalendarSession;
 import com.athletiq.planning.dto.MovePlannedSessionRequest;
 import com.athletiq.planning.dto.PlannedSessionDetailResponse;
+import com.athletiq.planning.dto.PlannedSessionSummary;
 import com.athletiq.user.Role;
 import com.athletiq.user.User;
 import com.athletiq.user.UserName;
@@ -53,6 +56,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
@@ -92,6 +96,8 @@ class PlanningServiceTest {
     private AccessGuard accessGuard;
     @Mock
     private CurrentUser currentUser;
+    @Mock
+    private PlannedSessionCompletion completion;
 
     private PlanningService service;
     private final UUID coachId = UUID.randomUUID();
@@ -107,7 +113,7 @@ class PlanningServiceTest {
                 new PlanningProperties(PlanningProperties.DEFAULT_ZONE));
         service = new PlanningService(plannedSessionRepository, snapshotRepository, snapshotExerciseRepository,
                 new PlanningMapperImpl(), workoutService, groupMemberService, userService, accessGuard, currentUser,
-                clock);
+                clock, completion);
         lenient().when(currentUser.id()).thenReturn(coachId);
         lenient().when(userService.getReference(any())).thenAnswer(call -> ref(call.getArgument(0)));
     }
@@ -205,6 +211,8 @@ class PlanningServiceTest {
 
         assertThat(detail.date()).isEqualTo(TODAY);
         assertThat(detail.locked()).isFalse();
+        assertThat(detail.status()).isEqualTo(SessionStatus.UPCOMING);
+        verifyNoInteractions(completion);
         assertThat(detail.athleteFirstName()).isEqualTo("Lucas");
         assertThat(detail.athleteLastName()).isEqualTo("Girard");
         assertThat(detail.exercises()).extracting(exercise -> exercise.exercise().name())
@@ -372,6 +380,52 @@ class PlanningServiceTest {
     }
 
     @Test
+    void aValidatedSessionIsDoneAndLockedEvenAheadAndAPastOneWithoutValidationIsMissed() {
+        PlannedSessionRow missed = row(athleteId, YESTERDAY, UUID.randomUUID(), "Bas du corps A", null);
+        PlannedSessionRow donePast = row(athleteId, YESTERDAY, UUID.randomUUID(), "Haut du corps A", null);
+        PlannedSessionRow upcoming = row(athleteId, TODAY, UUID.randomUUID(), "Bas du corps A", null);
+        PlannedSessionRow doneAhead = row(athleteId, TODAY.plusDays(2), UUID.randomUUID(), "Haut du corps A", null);
+        List<PlannedSessionRow> rows = List.of(missed, donePast, upcoming, doneAhead);
+        when(plannedSessionRepository.findAthleteRows(coachId, athleteId, MONDAY, MONDAY.plusDays(27))).thenReturn(rows);
+        when(completion.findValidated(rows.stream().map(PlannedSessionRow::id).toList()))
+                .thenReturn(Set.of(donePast.id(), doneAhead.id()));
+
+        AthleteCalendarResponse calendar = service.athleteCalendar(athleteId, MONDAY, MONDAY.plusDays(27));
+
+        assertThat(calendar.sessions()).extracting(PlannedSessionSummary::status).containsExactly(
+                SessionStatus.MISSED, SessionStatus.DONE, SessionStatus.UPCOMING, SessionStatus.DONE);
+        assertThat(calendar.sessions()).extracting(PlannedSessionSummary::locked)
+                .containsExactly(true, true, false, true);
+        // Une seule question pour tout l'écran, jamais une par séance.
+        verify(completion).findValidated(anyCollection());
+    }
+
+    @Test
+    void inTheGroupCalendarEachSessionHasItsStatusAndAnEntryIsLockedOnlyWhenAllAreDone() {
+        GroupMemberRef durand = new GroupMemberRef(UUID.randomUUID(), "Lucas", "Durand");
+        GroupMemberRef martin = new GroupMemberRef(UUID.randomUUID(), "Emma", "Martin");
+        when(groupMemberService.listAllMembers(groupId)).thenReturn(List.of(durand, martin));
+        LocalDate later = TODAY.plusDays(3);
+        PlannedSessionRow durandUpper = row(durand.athleteId(), later, UUID.randomUUID(), "Haut du corps A", groupId);
+        PlannedSessionRow martinUpper = row(martin.athleteId(), later, durandUpper.snapshotId(), "Haut du corps A",
+                groupId);
+        PlannedSessionRow durandLower = row(durand.athleteId(), later, UUID.randomUUID(), "Bas du corps A", groupId);
+        when(plannedSessionRepository.findGroupRows(any(), any(), anyCollection(), any(), any()))
+                .thenReturn(List.of(durandUpper, martinUpper, durandLower));
+        when(completion.findValidated(anyCollection())).thenReturn(Set.of(durandUpper.id(), durandLower.id()));
+
+        GroupCalendarResponse calendar = service.groupCalendar(groupId, MONDAY, MONDAY.plusDays(27));
+
+        assertThat(calendar.entries()).extracting(GroupCalendarEntry::name)
+                .containsExactly("Bas du corps A", "Haut du corps A");
+        assertThat(calendar.entries().getFirst().locked()).isTrue();
+        GroupCalendarEntry upper = calendar.entries().get(1);
+        assertThat(upper.locked()).isFalse();
+        assertThat(upper.sessions()).extracting(GroupCalendarSession::status)
+                .containsExactly(SessionStatus.DONE, SessionStatus.UPCOMING);
+    }
+
+    @Test
     void theCalendarOfAnAthleteNotFollowedAnswers404() {
         doThrow(AthleteErrors.athleteNotFound()).when(accessGuard).assertCoachOfAthlete(athleteId);
 
@@ -438,8 +492,7 @@ class PlanningServiceTest {
 
     @Test
     void theUpcomingCountStartsToday() {
-        when(plannedSessionRepository.countByCoachIdAndAthleteIdAndScheduledDateGreaterThanEqual(coachId, athleteId,
-                TODAY)).thenReturn(4L);
+        when(plannedSessionRepository.countUpcoming(coachId, athleteId, TODAY)).thenReturn(4L);
 
         assertThat(service.upcomingCount(athleteId).count()).isEqualTo(4);
         verify(accessGuard).assertCoachOfAthlete(athleteId);
@@ -479,8 +532,40 @@ class PlanningServiceTest {
         verify(accessGuard).assertPlannedSessionOwner(past.getId());
         verify(snapshotExerciseRepository).fetchSetsOfSnapshot(past.getSnapshot().getId());
         assertThat(detail.locked()).isTrue();
+        assertThat(detail.status()).isEqualTo(SessionStatus.MISSED);
         assertThat(detail.name()).isEqualTo("Haut du corps A");
         assertThat(detail.sourceWorkoutId()).isEqualTo(workoutId);
+    }
+
+    @Test
+    void aValidatedFutureSessionIsDoneAndLocked() {
+        PlannedSession ahead = plannedSession(TODAY.plusDays(2));
+        stubOwn(ahead);
+        when(snapshotRepository.findDetailById(any())).thenReturn(Optional.of(ahead.getSnapshot()));
+        when(completion.findValidated(List.of(ahead.getId()))).thenReturn(Set.of(ahead.getId()));
+
+        PlannedSessionDetailResponse detail = service.get(ahead.getId());
+
+        assertThat(detail.status()).isEqualTo(SessionStatus.DONE);
+        assertThat(detail.locked()).isTrue();
+    }
+
+    @Test
+    void aValidatedSessionCannotBeMovedNorCancelledEvenAhead() {
+        PlannedSession ahead = plannedSession(TODAY.plusDays(2));
+        stubOwn(ahead);
+        when(completion.findValidated(List.of(ahead.getId()))).thenReturn(Set.of(ahead.getId()));
+
+        Throwable moved = catchThrowable(() -> service.move(ahead.getId(),
+                new MovePlannedSessionRequest(TODAY.plusDays(5))));
+        Throwable cancelled = catchThrowable(() -> service.cancel(ahead.getId()));
+
+        assertDomainError(moved, BusinessRuleException.class, PlanningErrors.PLANNED_SESSION_LOCKED);
+        assertDomainError(cancelled, BusinessRuleException.class, PlanningErrors.PLANNED_SESSION_LOCKED);
+        assertThat(ahead.getScheduledDate()).isEqualTo(TODAY.plusDays(2));
+        verify(plannedSessionRepository, never()).flush();
+        verify(plannedSessionRepository, never()).deleteByIdAndCoachId(any(), any());
+        verify(snapshotRepository, never()).deleteOrphans(any());
     }
 
     @Test
@@ -494,6 +579,7 @@ class PlanningServiceTest {
         assertThat(session.getScheduledDate()).isEqualTo(TODAY.plusDays(3));
         assertThat(moved.date()).isEqualTo(TODAY.plusDays(3));
         assertThat(moved.name()).isEqualTo("Haut du corps A");
+        assertThat(moved.status()).isEqualTo(SessionStatus.UPCOMING);
         verify(plannedSessionRepository).flush();
     }
 

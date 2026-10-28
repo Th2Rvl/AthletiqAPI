@@ -20,11 +20,17 @@ import com.athletiq.organisation.OrganisationCoachRepository;
 import com.athletiq.organisation.OrganisationInvitation;
 import com.athletiq.organisation.OrganisationInvitationRepository;
 import com.athletiq.organisation.OrganisationRepository;
+import com.athletiq.performance.PerformanceStatus;
+import com.athletiq.performance.PerformedSet;
+import com.athletiq.performance.SessionPerformance;
+import com.athletiq.performance.SessionPerformanceRepository;
 import com.athletiq.planning.PlannedSession;
 import com.athletiq.planning.PlannedSessionRepository;
 import com.athletiq.planning.PlanningClock;
 import com.athletiq.planning.SessionSnapshot;
+import com.athletiq.planning.SessionSnapshotExercise;
 import com.athletiq.planning.SessionSnapshotRepository;
+import com.athletiq.planning.SessionSnapshotSet;
 import com.athletiq.user.Role;
 import com.athletiq.user.User;
 import com.athletiq.user.UserService;
@@ -38,6 +44,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -65,6 +72,13 @@ import org.springframework.transaction.annotation.Transactional;
  * encore rien planifié, une séance individuelle à venir pour Lucas, une seconde le même jour (plusieurs
  * séances par jour, Q1), une séance passée (verrouillée), et une planification du groupe « Sprint »
  * (instantané partagé par ses membres).
+ *
+ * <p>Suivi (#7) : s'il n'a encore aucune réalisation, le coach de démo reçoit quatre semaines de séances
+ * passées, en attendant la saisie par l'athlète (#10) : chez Lucas, des séances validées avec et sans ressenti
+ * ou commentaire, une corrigée, une série non faite, un gainage au poids du corps, une séance non faite et un
+ * brouillon (invisible du coach) ; chez les autres athlètes, de quoi remplir le tableau de bord, dont deux
+ * athlètes « À surveiller » et une séance validée avant sa date (Q17). Claire Martin a aussi une séance
+ * réalisée par Lucas, qui ne doit jamais apparaître chez le coach de démo (multi-coach, RM1).
  *
  * <p>Les organisations sont écrites par les repositories et non par {@code OrganisationService} :
  * au démarrage il n'y a pas d'utilisateur connecté, donc pas d'admin pour passer {@code assertAdmin()}.
@@ -100,6 +114,8 @@ public class DevDataSeeder implements ApplicationRunner {
     /** Code d'invitation de démonstration, connu pour tester la saisie depuis l'app mobile. Dev uniquement. */
     static final String DEMO_INVITATION_CODE = "K7QH3MPA";
     private static final String DEMO_COACH = "coach@club.fr";
+    private static final String CLAIRE = "claire.martin@stade-rennais-athle.fr";
+    private static final String LUCAS = "lucas.girard@athlete.fr";
 
     private record DemoLink(String coachEmail, String athleteEmail, int joinedDaysAgo) {
     }
@@ -132,6 +148,7 @@ public class DevDataSeeder implements ApplicationRunner {
     private final WorkoutMapper workoutMapper;
     private final PlannedSessionRepository plannedSessionRepository;
     private final SessionSnapshotRepository snapshotRepository;
+    private final SessionPerformanceRepository performanceRepository;
     private final PlanningClock planningClock;
     private final Clock clock;
     private final String demoPassword;
@@ -151,6 +168,7 @@ public class DevDataSeeder implements ApplicationRunner {
                          WorkoutMapper workoutMapper,
                          PlannedSessionRepository plannedSessionRepository,
                          SessionSnapshotRepository snapshotRepository,
+                         SessionPerformanceRepository performanceRepository,
                          PlanningClock planningClock,
                          Clock clock,
                          @Value("${athletiq.dev.demo-password:}") String demoPassword) {
@@ -169,6 +187,7 @@ public class DevDataSeeder implements ApplicationRunner {
         this.workoutMapper = workoutMapper;
         this.plannedSessionRepository = plannedSessionRepository;
         this.snapshotRepository = snapshotRepository;
+        this.performanceRepository = performanceRepository;
         this.planningClock = planningClock;
         this.clock = clock;
         this.demoPassword = demoPassword;
@@ -274,7 +293,10 @@ public class DevDataSeeder implements ApplicationRunner {
         seedPlanning(coach, users);
     }
 
-    /** Bibliothèque et planning de démonstration du coach de démo ; le planning n'est créé qu'une fois. */
+    /**
+     * Bibliothèque et planning de démonstration du coach de démo ; le planning (#6) n'est créé qu'une fois, le
+     * suivi (#7) aussi, chacun selon son propre test d'existence.
+     */
     private void seedPlanning(User coach, Map<String, User> users) {
         Exercise bench = exercise(coach, "Développé couché", MuscleGroup.PECTORAUX, "Barre");
         Exercise row = exercise(coach, "Rowing barre", MuscleGroup.DOS, "Barre");
@@ -287,11 +309,17 @@ public class DevDataSeeder implements ApplicationRunner {
                 List.of(exercise(squat, null, set(5, "80.0", 150), set(5, "80.0", 150), set(5, "80.0", 150)),
                         exercise(plank, "45 s par série", set(1, null, 60), set(1, null, 60))));
 
-        if (plannedSessionRepository.existsByCoachId(coach.getId())) {
-            return;
+        if (!plannedSessionRepository.existsByCoachId(coach.getId())) {
+            seedUpcomingPlanning(coach, users, upper, lower);
         }
+        seedTracking(coach, users, upper, lower);
+        seedOtherCoachTracking(users);
+    }
+
+    /** Planning (#6) : séances à venir de Lucas, une passée, et une planification du groupe « Sprint ». */
+    private void seedUpcomingPlanning(User coach, Map<String, User> users, Workout upper, Workout lower) {
         LocalDate today = planningClock.today();
-        User lucas = users.get("lucas.girard@athlete.fr");
+        User lucas = users.get(LUCAS);
         if (lucas != null) {
             plan(coach, lucas, today.plusDays(2), upper);
             plan(coach, lucas, today.plusDays(2), lower);
@@ -348,16 +376,159 @@ public class DevDataSeeder implements ApplicationRunner {
     }
 
     /** Une planification individuelle : un instantané neuf, comme {@code PlanningService.planForAthlete}. */
-    private void plan(User coach, User athlete, LocalDate date, Workout workout) {
+    private PlannedSession plan(User coach, User athlete, LocalDate date, Workout workout) {
         SessionSnapshot snapshot = snapshotRepository.save(
                 SessionSnapshot.copyOf(coach, workoutMapper.toResponse(workout)));
-        plannedSessionRepository.save(PlannedSession.builder()
+        return plannedSessionRepository.save(PlannedSession.builder()
                 .coach(coach)
                 .athlete(athlete)
                 .scheduledDate(date)
                 .snapshot(snapshot)
                 .sourceWorkoutId(workout.getId())
                 .build());
+    }
+
+    // ---------------------------------------------------------------- suivi (#7)
+
+    /** Série réalisée de démonstration ; {@code reps} vide = série non faite. */
+    private record Performed(Integer reps, BigDecimal loadKg) {
+    }
+
+    private static Performed performed(int reps, String loadKg) {
+        return new Performed(reps, loadKg == null ? null : new BigDecimal(loadKg));
+    }
+
+    private static Performed skipped() {
+        return new Performed(null, null);
+    }
+
+    /**
+     * Quatre semaines de séances passées pour le coach de démo, créées une seule fois (s'il n'a encore aucune
+     * réalisation). « Haut du corps A » : 3 séries de développé couché puis 2 de rowing ; « Bas du corps A » :
+     * 3 séries de squat puis 2 de gainage au poids du corps.
+     */
+    private void seedTracking(User coach, Map<String, User> users, Workout upper, Workout lower) {
+        if (performanceRepository.existsByPlannedSessionCoachId(coach.getId())) {
+            return;
+        }
+        LocalDate today = planningClock.today();
+        User lucas = users.get(LUCAS);
+        if (lucas != null) {
+            validate(plan(coach, lucas, today.minusDays(25), upper), 25, 7, 3,
+                    "Bonnes sensations, dernière série difficile.",
+                    performed(8, "60.0"), performed(8, "60.0"), performed(6, "65.0"),
+                    performed(10, "50.0"), performed(10, "50.0"));
+            validate(plan(coach, lucas, today.minusDays(22), lower), 22, 8, 4, null,
+                    performed(5, "80.0"), performed(5, "80.0"), performed(4, "80.0"),
+                    performed(1, null), performed(1, null));
+            // Sans ressenti ni commentaire, et la dernière série de rowing non faite.
+            validate(plan(coach, lucas, today.minusDays(18), upper), 18, null, null, null,
+                    performed(8, "62.5"), performed(8, "62.5"), performed(6, "67.5"),
+                    performed(10, "50.0"), skipped());
+            // Non faite : aucune réalisation.
+            plan(coach, lucas, today.minusDays(15), lower);
+            // Validée puis corrigée le lendemain (« Modifiée le … »).
+            validate(plan(coach, lucas, today.minusDays(11), upper), 11, 6, 2,
+                    "RPE corrigé : la séance était plus facile que noté.",
+                    performed(8, "65.0"), performed(7, "65.0"), performed(6, "70.0"),
+                    performed(10, "52.5"), performed(10, "52.5"))
+                    .setCorrectedAt(daysAgo(10));
+            validate(plan(coach, lucas, today.minusDays(8), lower), 8, 9, 5, "Squat lourd, genou gauche sensible.",
+                    performed(5, "85.0"), performed(5, "85.0"), performed(5, "85.0"),
+                    performed(1, null), performed(1, null));
+            // Brouillon : invisible du coach, la séance reste « Non faite ».
+            perform(plan(coach, lucas, today.minusDays(4), upper), PerformanceStatus.DRAFT, null, null, null, null,
+                    performed(8, "65.0"), performed(8, "65.0"));
+        }
+        User emma = users.get("emma.lefevre@athlete.fr");
+        if (emma != null) {
+            validateAsPlanned(plan(coach, emma, today.minusDays(20), upper), 20, 6, 3);
+            validateAsPlanned(plan(coach, emma, today.minusDays(13), lower), 13, 7, 3);
+            validateAsPlanned(plan(coach, emma, today.minusDays(6), upper), 6, 7, 4);
+            // Q17 : validée avant sa date, donc déjà réalisée et verrouillée dans le calendrier.
+            validateAsPlanned(plan(coach, emma, today.plusDays(1), lower), 0, 6, 2);
+        }
+        User hugo = users.get("hugo.fontaine@athlete.fr");
+        if (hugo != null) {
+            validateAsPlanned(plan(coach, hugo, today.minusDays(19), lower), 19, 8, 4);
+            plan(coach, hugo, today.minusDays(12), upper);
+            plan(coach, hugo, today.minusDays(3), lower);
+        }
+        User lea = users.get("lea.garnier@athlete.fr");
+        if (lea != null) {
+            validateAsPlanned(plan(coach, lea, today.minusDays(16), upper), 16, null, null);
+            validateAsPlanned(plan(coach, lea, today.minusDays(9), lower), 9, 6, 2);
+        }
+        User maelys = users.get("maelys.rousseau@athlete.fr");
+        if (maelys != null) {
+            validateAsPlanned(plan(coach, maelys, today.minusDays(17), upper), 17, 7, 3);
+            plan(coach, maelys, today.minusDays(5), lower);
+        }
+        log.info("Données de démonstration : suivi du coach {} créé", DEMO_COACH);
+    }
+
+    /** Multi-coach (RM1) : une séance de Claire Martin réalisée par Lucas, jamais visible du coach de démo. */
+    private void seedOtherCoachTracking(Map<String, User> users) {
+        User claire = users.get(CLAIRE);
+        User lucas = users.get(LUCAS);
+        if (claire == null || lucas == null || performanceRepository.existsByPlannedSessionCoachId(claire.getId())) {
+            return;
+        }
+        Exercise lunge = exercise(claire, "Fentes", MuscleGroup.QUADRICEPS, "Haltères");
+        Workout legs = workout(claire, "Renforcement jambes", null,
+                List.of(exercise(lunge, null, set(10, "20.0", 60), set(10, "20.0", 60))));
+        validate(plan(claire, lucas, planningClock.today().minusDays(6), legs), 6, 6, 3, "Séance avec Claire.",
+                performed(10, "20.0"), performed(10, "22.5"));
+    }
+
+    private Instant daysAgo(int days) {
+        return clock.instant().minus(Duration.ofDays(days));
+    }
+
+    /** Réalisation validée {@code validatedDaysAgo} jours plus tôt, séries données dans l'ordre de l'instantané. */
+    private SessionPerformance validate(PlannedSession session, int validatedDaysAgo, Integer rpe, Integer fatigue,
+                                        String comment, Performed... sets) {
+        return perform(session, PerformanceStatus.VALIDATED, daysAgo(validatedDaysAgo), rpe, fatigue, comment, sets);
+    }
+
+    /** Réalisation validée, chaque série faite comme prévu. */
+    private void validateAsPlanned(PlannedSession session, int validatedDaysAgo, Integer rpe, Integer fatigue) {
+        Performed[] sets = plannedSets(session).stream()
+                .map(set -> new Performed(set.getReps(), set.getLoadKg()))
+                .toArray(Performed[]::new);
+        validate(session, validatedDaysAgo, rpe, fatigue, null, sets);
+    }
+
+    /** Une série prévue au-delà des séries données n'a pas de ligne : elle est non faite (Q2). */
+    private SessionPerformance perform(PlannedSession session, PerformanceStatus status, Instant validatedAt,
+                                       Integer rpe, Integer fatigue, String comment, Performed... sets) {
+        SessionPerformance performance = SessionPerformance.builder()
+                .plannedSession(session)
+                .athlete(session.getAthlete())
+                .status(status)
+                .rpe(rpe)
+                .fatigue(fatigue)
+                .comment(comment)
+                .validatedAt(validatedAt)
+                .build();
+        List<SessionSnapshotSet> plannedSets = plannedSets(session);
+        for (int i = 0; i < sets.length && i < plannedSets.size(); i++) {
+            performance.addSet(PerformedSet.builder()
+                    .snapshotSet(plannedSets.get(i))
+                    .reps(sets[i].reps())
+                    .loadKg(sets[i].loadKg())
+                    .build());
+        }
+        return performanceRepository.save(performance);
+    }
+
+    /** Séries prévues de l'instantané, par position d'exercice puis de série. */
+    private static List<SessionSnapshotSet> plannedSets(PlannedSession session) {
+        return session.getSnapshot().getExercises().stream()
+                .sorted(Comparator.comparingInt(SessionSnapshotExercise::getPosition))
+                .flatMap(exercise -> exercise.getSets().stream()
+                        .sorted(Comparator.comparingInt(SessionSnapshotSet::getPosition)))
+                .toList();
     }
 
     private void createOrganisation(String name, String description, Map<String, Organisation> created) {
