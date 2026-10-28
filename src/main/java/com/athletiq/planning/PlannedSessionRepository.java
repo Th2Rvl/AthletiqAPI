@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -36,6 +37,19 @@ public interface PlannedSessionRepository extends JpaRepository<PlannedSession, 
             """)
     List<AthleteSessionRow> findOwnRows(@Param("athleteId") UUID athleteId,
                                         @Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    /** Prochaines séances de l'athlète après ce jour (exclu), de la plus proche à la plus lointaine. */
+    @Query("""
+            select new com.athletiq.planning.AthleteSessionRow(ps.id, ps.scheduledDate, s.id, s.name,
+                   c.id, c.firstName, c.lastName, ps.createdAt)
+            from PlannedSession ps
+            join ps.snapshot s
+            join ps.coach c
+            where ps.athlete.id = :athleteId and ps.scheduledDate > :after
+            order by ps.scheduledDate asc, ps.createdAt asc, ps.id asc
+            """)
+    List<AthleteSessionRow> findOwnRowsAfter(@Param("athleteId") UUID athleteId, @Param("after") LocalDate after,
+                                             Pageable pageable);
 
     /** Une séance de l'athlète connecté, avec son instantané et son coach. */
     @Query("""

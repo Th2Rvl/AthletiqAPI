@@ -479,9 +479,12 @@ class PlanningIntegrationTest {
                 .andExpect(jsonPath("$.today").value(today.toString()))
                 .andExpect(jsonPath("$.sessions.length()").value(1))
                 .andExpect(jsonPath("$.sessions[0].id").value(sessionId))
-                .andExpect(jsonPath("$.sessions[0].exerciseCount").value(2))
+                .andExpect(jsonPath("$.sessions[0].exercises.length()").value(2))
                 .andExpect(jsonPath("$.sessions[0].coachLastName").value("Petit"))
-                .andExpect(jsonPath("$.sessions[0].status").value("UPCOMING"));
+                .andExpect(jsonPath("$.sessions[0].status").value("UPCOMING"))
+                .andExpect(jsonPath("$.next.date").value(today.plusDays(2).toString()))
+                .andExpect(jsonPath("$.next.exerciseNames.length()").value(2))
+                .andExpect(jsonPath("$.last").doesNotExist());
 
         mockMvc.perform(get("/api/v1/me/planned-sessions").header(HttpHeaders.AUTHORIZATION, lucasToken)
                         .param("from", today.minusDays(7).toString()).param("to", today.plusDays(7).toString()))

@@ -589,6 +589,8 @@ class PerformanceIntegrationTest {
                 .containsExactly("Tractions", "Développé couché", "Fentes");
         assertThat(JsonPath.<List<Object>>read(records, "$.records[*].loadKg")).containsExactly(null, 65.0, 30.0);
         assertThat(JsonPath.<List<Integer>>read(records, "$.records[*].reps")).containsExactly(10, 6, 12);
+        // L'ancien record : tractions battues (8 puis 10), les deux autres sont des premiers records.
+        assertThat(JsonPath.<List<Integer>>read(records, "$.records[*].previousReps")).containsExactly(8, null, null);
         assertThat(JsonPath.<List<String>>read(records, "$.records[*].date"))
                 .containsExactly(today.minusDays(10).toString(), today.minusDays(20).toString(),
                         today.minusDays(2).toString());
@@ -614,18 +616,18 @@ class PerformanceIntegrationTest {
 
         // US18 : 3 réalisées, 2 non faites (dont le brouillon), RPE moyen (8 + 6 + 7) / 3.
         String kpis = read(lucasToken, "/api/v1/me/kpis");
-        assertThat(JsonPath.<Integer>read(kpis, "$.weeks")).isEqualTo(4);
-        assertThat(JsonPath.<String>read(kpis, "$.from")).isEqualTo(today.minusDays(28).toString());
+        assertThat(JsonPath.<Integer>read(kpis, "$.days")).isEqualTo(30);
+        assertThat(JsonPath.<String>read(kpis, "$.from")).isEqualTo(today.minusDays(30).toString());
         assertThat(JsonPath.<String>read(kpis, "$.to")).isEqualTo(today.minusDays(1).toString());
         assertThat(JsonPath.<Integer>read(kpis, "$.doneCount")).isEqualTo(3);
         assertThat(JsonPath.<Integer>read(kpis, "$.missedCount")).isEqualTo(2);
         assertThat(JsonPath.<Integer>read(kpis, "$.completionRate")).isEqualTo(60);
         assertThat(JsonPath.<Double>read(kpis, "$.averageRpe")).isEqualTo(7.0);
         assertThat(JsonPath.<Integer>read(kpis, "$.recentMissedCount")).isEqualTo(2);
-        assertThat(JsonPath.<Object>read(read(emmaToken, "/api/v1/me/kpis?weeks=12"), "$.completionRate")).isEqualTo(100);
+        assertThat(JsonPath.<Object>read(read(emmaToken, "/api/v1/me/kpis?days=90"), "$.completionRate")).isEqualTo(100);
 
         // Paramètres refusés, rôles et accès sans coach.
-        for (String uri : List.of("/api/v1/me/kpis?weeks=5", "/api/v1/me/exercises/" + bench + "/progression?weeks=5",
+        for (String uri : List.of("/api/v1/me/kpis?days=5", "/api/v1/me/exercises/" + bench + "/progression?weeks=5",
                 "/api/v1/me/session-history?status=UPCOMING", "/api/v1/me/session-history?size=101")) {
             mockMvc.perform(get(uri).header(HttpHeaders.AUTHORIZATION, lucasToken)).andExpect(status().isBadRequest());
         }

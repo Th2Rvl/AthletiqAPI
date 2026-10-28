@@ -1,6 +1,7 @@
 package com.athletiq.planning;
 
 import java.util.Collection;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -17,4 +18,10 @@ public interface PlannedSessionCompletion {
      * vide ne coûte aucune requête). Un brouillon ne compte pas.
      */
     Set<UUID> findValidated(Collection<UUID> plannedSessionIds);
+
+    /**
+     * Parmi ces séances planifiées, résumé de celles dont la réalisation est validée (RPE, séries faites,
+     * commentaire), en une requête. Une séance absente de la map n'est pas réalisée.
+     */
+    Map<UUID, CompletionSummary> summarize(Collection<UUID> plannedSessionIds);
 }

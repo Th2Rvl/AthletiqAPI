@@ -19,7 +19,7 @@ import com.athletiq.common.security.AccessGuard;
 import com.athletiq.common.security.CurrentUser;
 import com.athletiq.exercise.MuscleGroup;
 import com.athletiq.performance.dto.AthleteKpisResponse;
-import com.athletiq.performance.dto.PersonalRecord;
+import com.athletiq.performance.dto.AthletePersonalRecord;
 import com.athletiq.performance.dto.ProgressionResponse;
 import com.athletiq.performance.dto.SessionHistoryFilter;
 import com.athletiq.planning.PlanningClock;
@@ -118,14 +118,50 @@ class AthleteTrackingServiceTest {
                 new PerformedSetGroupRow(pullUp, "Tractions", MuscleGroup.DOS, s2, TODAY.minusDays(10), NOW, null, 10),
                 new PerformedSetGroupRow(pullUp, "Tractions", MuscleGroup.DOS, s1, TODAY.minusDays(20), NOW, null, 8)));
 
-        List<PersonalRecord> records = service.personalRecords().records();
+        List<AthletePersonalRecord> records = service.personalRecords().records();
 
-        assertThat(records).extracting(PersonalRecord::exerciseName).containsExactly("Tractions", "Développé couché");
+        assertThat(records).extracting(AthletePersonalRecord::exerciseName).containsExactly("Tractions", "Développé couché");
         assertThat(records.get(0).bodyweight()).isTrue();
         assertThat(records.get(0).reps()).isEqualTo(10);
         assertThat(records.get(1).loadKg()).isEqualByComparingTo("65.0");
         assertThat(records.get(1).reps()).isEqualTo(6);
         assertThat(records.get(1).plannedSessionId()).isEqualTo(s1);
+    }
+
+    @Test
+    void aRecordKnowsTheRecordItBeat() {
+        UUID bench = UUID.randomUUID();
+        UUID s1 = UUID.randomUUID();
+        UUID s2 = UUID.randomUUID();
+        UUID s3 = UUID.randomUUID();
+        when(repository.findPerformedSetGroups(athlete.getId())).thenReturn(List.of(
+                new PerformedSetGroupRow(bench, "Squat", MuscleGroup.QUADRICEPS, s1, TODAY.minusDays(40), NOW,
+                        new BigDecimal("80.0"), 5),
+                new PerformedSetGroupRow(bench, "Squat", MuscleGroup.QUADRICEPS, s2, TODAY.minusDays(25), NOW,
+                        new BigDecimal("90.0"), 3),
+                new PerformedSetGroupRow(bench, "Squat", MuscleGroup.QUADRICEPS, s3, TODAY.minusDays(25), NOW,
+                        new BigDecimal("85.0"), 5),
+                new PerformedSetGroupRow(bench, "Squat", MuscleGroup.QUADRICEPS, s3, TODAY.minusDays(3), NOW,
+                        new BigDecimal("92.5"), 1)));
+
+        AthletePersonalRecord record = service.personalRecords().records().getFirst();
+
+        assertThat(record.loadKg()).isEqualByComparingTo("92.5");
+        assertThat(record.previousLoadKg()).isEqualByComparingTo("90.0");
+        assertThat(record.previousReps()).isEqualTo(3);
+    }
+
+    @Test
+    void aFirstRecordHasNoPreviousOne() {
+        UUID exercise = UUID.randomUUID();
+        when(repository.findPerformedSetGroups(athlete.getId())).thenReturn(List.of(
+                new PerformedSetGroupRow(exercise, "Tractions", MuscleGroup.DOS, UUID.randomUUID(),
+                        TODAY.minusDays(3), NOW, null, 10)));
+
+        AthletePersonalRecord record = service.personalRecords().records().getFirst();
+
+        assertThat(record.previousLoadKg()).isNull();
+        assertThat(record.previousReps()).isNull();
     }
 
     @Test
@@ -160,10 +196,10 @@ class AthleteTrackingServiceTest {
 
     @Test
     void kpisCountThePastWeeksWithoutTodayAndAverageTheRpe() {
-        when(repository.aggregateKpi(athlete.getId(), TODAY.minusWeeks(4), TODAY.minusDays(1), TODAY.minusDays(7)))
+        when(repository.aggregateKpi(athlete.getId(), TODAY.minusDays(30), TODAY.minusDays(1), TODAY.minusDays(7)))
                 .thenReturn(Optional.of(new AthleteKpiRow(athlete.getId(), 3, 2, 2, 21L, 3)));
 
-        AthleteKpisResponse kpis = service.kpis(4);
+        AthleteKpisResponse kpis = service.kpis(30);
 
         assertThat(kpis.to()).isEqualTo(TODAY.minusDays(1));
         assertThat(kpis.doneCount()).isEqualTo(3);
@@ -177,12 +213,12 @@ class AthleteTrackingServiceTest {
     void kpisAreEmptyWithoutPastSessionsAndRefuseAnUnknownPeriod() {
         when(repository.aggregateKpi(any(), any(), any(), any())).thenReturn(Optional.empty());
 
-        AthleteKpisResponse kpis = service.kpis(12);
+        AthleteKpisResponse kpis = service.kpis(90);
 
         assertThat(kpis.completionRate()).isNull();
         assertThat(kpis.averageRpe()).isNull();
         assertThat(kpis.doneCount()).isZero();
-        assertThatThrownBy(() -> service.kpis(8)).isInstanceOf(InvalidParameterException.class);
+        assertThatThrownBy(() -> service.kpis(28)).isInstanceOf(InvalidParameterException.class);
     }
 
     @Test
@@ -191,7 +227,7 @@ class AthleteTrackingServiceTest {
 
         assertThatThrownBy(() -> service.personalRecords()).isInstanceOf(ForbiddenActionException.class);
         assertThatThrownBy(() -> service.performedExercises()).isInstanceOf(ForbiddenActionException.class);
-        assertThatThrownBy(() -> service.kpis(4)).isInstanceOf(ForbiddenActionException.class);
+        assertThatThrownBy(() -> service.kpis(30)).isInstanceOf(ForbiddenActionException.class);
         verifyNoInteractions(repository);
     }
 }

@@ -17,6 +17,10 @@ public interface SessionSnapshotExerciseRepository extends JpaRepository<Session
             """)
     List<SessionSnapshotExercise> fetchSetsOfSnapshot(@Param("snapshotId") UUID snapshotId);
 
+    /** Noms des exercices d'un instantané, dans l'ordre de la séance. */
+    @Query("select e.exerciseName from SessionSnapshotExercise e where e.snapshot.id = :snapshotId order by e.position")
+    List<String> findNamesBySnapshot(@Param("snapshotId") UUID snapshotId);
+
     /** Calendrier : nombre d'exercices et de séries de chaque instantané, en une requête agrégée. */
     @Query("""
             select new com.athletiq.planning.SnapshotCount(e.snapshot.id, count(distinct e.id), count(st.id))

@@ -2,6 +2,7 @@ package com.athletiq.planning;
 
 import com.athletiq.planning.dto.AthleteSessionDetailResponse;
 import com.athletiq.planning.dto.AthleteSessionListResponse;
+import com.athletiq.planning.dto.AthleteTodayResponse;
 import java.time.LocalDate;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +24,7 @@ public class AthletePlanningController {
     private final AthletePlanningService athletePlanningService;
 
     @GetMapping("/today")
-    public AthleteSessionListResponse today() {
+    public AthleteTodayResponse today() {
         return athletePlanningService.today();
     }
 

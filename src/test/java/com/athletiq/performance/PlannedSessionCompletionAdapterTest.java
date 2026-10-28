@@ -33,4 +33,28 @@ class PlannedSessionCompletionAdapterTest {
         assertThat(new PlannedSessionCompletionAdapter(performanceRepository).findValidated(List.of())).isEmpty();
         verifyNoInteractions(performanceRepository);
     }
+
+    @Test
+    void summarizesTheValidatedSessionsWithRpeDoneSetsAndComment() {
+        UUID commented = UUID.randomUUID();
+        UUID silent = UUID.randomUUID();
+        when(performanceRepository.summarizeValidated(List.of(commented, silent))).thenReturn(List.of(
+                new CompletionRow(commented, 8, 13L, 1L), new CompletionRow(silent, null, 0L, 0L)));
+
+        var summaries = new PlannedSessionCompletionAdapter(performanceRepository)
+                .summarize(List.of(commented, silent));
+
+        assertThat(summaries).hasSize(2);
+        assertThat(summaries.get(commented).rpe()).isEqualTo(8);
+        assertThat(summaries.get(commented).doneSetCount()).isEqualTo(13);
+        assertThat(summaries.get(commented).hasComment()).isTrue();
+        assertThat(summaries.get(silent).rpe()).isNull();
+        assertThat(summaries.get(silent).hasComment()).isFalse();
+    }
+
+    @Test
+    void anEmptySummaryBatchCostsNoQuery() {
+        assertThat(new PlannedSessionCompletionAdapter(performanceRepository).summarize(List.of())).isEmpty();
+        verifyNoInteractions(performanceRepository);
+    }
 }
