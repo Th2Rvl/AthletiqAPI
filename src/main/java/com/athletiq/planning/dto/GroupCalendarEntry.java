@@ -9,6 +9,8 @@ import java.util.UUID;
  *
  * @param athleteCount membres actuels ayant cette séance ce jour-là (n)
  * @param memberCount  membres actuels du groupe (N)
+ * @param locked       jour passé, ou toutes les séances de l'entrée réalisées (#7) ; sinon, chaque séance
+ *                     porte son propre {@code status}
  * @param sessions     triées par nom puis prénom
  */
 public record GroupCalendarEntry(

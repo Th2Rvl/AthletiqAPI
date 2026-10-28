@@ -1,5 +1,6 @@
 package com.athletiq.athlete;
 
+import com.athletiq.athlete.dto.AthleteRef;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -32,6 +33,23 @@ public interface CoachAthleteRepository extends JpaRepository<CoachAthlete, UUID
             """)
     long countActiveByCoachIdAndAthleteIds(@Param("coachId") UUID coachId,
                                            @Param("athleteIds") Collection<UUID> athleteIds);
+
+    /**
+     * Tous les athlètes suivis activement par ce coach, membres de ce groupe s'il est donné, triés par nom puis
+     * prénom (collation ai_ci), sans pagination : le tableau de bord (#7) en montre chacun. Le groupe est
+     * aussi filtré par coach, en plus du contrôle de propriété fait avant.
+     */
+    @Query("""
+            select new com.athletiq.athlete.dto.AthleteRef(a.id, a.firstName, a.lastName)
+            from CoachAthlete l
+            join l.athlete a
+            where l.coach.id = :coachId and l.endedAt is null
+              and (:groupId is null or exists (
+                   select m.id from AthleteGroupMember m
+                   where m.group.id = :groupId and m.group.coach.id = :coachId and m.athlete = a))
+            order by a.lastName asc, a.firstName asc, a.id asc
+            """)
+    List<AthleteRef> findFollowedRefs(@Param("coachId") UUID coachId, @Param("groupId") UUID groupId);
 
     /**
      * Athlètes suivis par ce coach (RM4 : filtrés par coach en base), triés par nom puis prénom.
