@@ -63,7 +63,7 @@ public class PerformanceService {
     /** US30 : périodes de progression permises, en semaines (12 par défaut). */
     static final Set<Integer> PROGRESSION_WEEKS = Set.of(4, 12, 26, 52);
     /** Noms d'exercice triés comme en base (collation ai_ci) : sans tenir compte de la casse ni des accents. */
-    private static final Comparator<String> NAME_ORDER = nameOrder();
+    static final Comparator<String> NAME_ORDER = nameOrder();
 
     private final SessionPerformanceRepository performanceRepository;
     private final PerformanceMapper mapper;
@@ -318,7 +318,7 @@ public class PerformanceService {
      * Q10 : la meilleure charge parmi les séries faites chargées, puis le plus de répétitions, puis la date la
      * plus ancienne ; sans série chargée (poids du corps), le plus de répétitions, puis la date la plus ancienne.
      */
-    private static PersonalRecord personalRecord(List<PerformedSetGroupRow> rows) {
+    static PersonalRecord personalRecord(List<PerformedSetGroupRow> rows) {
         List<PerformedSetGroupRow> loaded = rows.stream().filter(row -> row.loadKg() != null).toList();
         boolean bodyweight = loaded.isEmpty();
         Comparator<PerformedSetGroupRow> mostReps =
@@ -337,13 +337,13 @@ public class PerformanceService {
     }
 
     /** RM6 : regroupement par exercice de la bibliothèque ({@code exercise_id} de l'instantané). */
-    private static Map<UUID, List<PerformedSetGroupRow>> byExercise(List<PerformedSetGroupRow> rows) {
+    static Map<UUID, List<PerformedSetGroupRow>> byExercise(List<PerformedSetGroupRow> rows) {
         return rows.stream().collect(Collectors.groupingBy(PerformedSetGroupRow::exerciseId, LinkedHashMap::new,
                 Collectors.toList()));
     }
 
     /** RM6 : la ligne de la séance réalisée la plus récente porte le libellé à afficher. */
-    private static PerformedSetGroupRow latest(List<PerformedSetGroupRow> rows) {
+    static PerformedSetGroupRow latest(List<PerformedSetGroupRow> rows) {
         return rows.stream()
                 .max(Comparator.comparing(PerformedSetGroupRow::date)
                         .thenComparing(PerformedSetGroupRow::createdAt)
