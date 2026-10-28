@@ -24,6 +24,28 @@ public interface PlannedSessionRepository extends JpaRepository<PlannedSession, 
             """)
     Optional<PlannedSession> findByIdAndCoachId(@Param("id") UUID id, @Param("coachId") UUID coachId);
 
+    /** Calendrier de l'athlète connecté : ses propres séances, tous coachs confondus, triées par date, création, id. */
+    @Query("""
+            select new com.athletiq.planning.AthleteSessionRow(ps.id, ps.scheduledDate, s.id, s.name,
+                   c.id, c.firstName, c.lastName, ps.createdAt)
+            from PlannedSession ps
+            join ps.snapshot s
+            join ps.coach c
+            where ps.athlete.id = :athleteId and ps.scheduledDate between :from and :to
+            order by ps.scheduledDate asc, ps.createdAt asc, ps.id asc
+            """)
+    List<AthleteSessionRow> findOwnRows(@Param("athleteId") UUID athleteId,
+                                        @Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    /** Une séance de l'athlète connecté, avec son instantané et son coach. */
+    @Query("""
+            select ps from PlannedSession ps
+            join fetch ps.snapshot
+            join fetch ps.coach
+            where ps.id = :id and ps.athlete.id = :athleteId
+            """)
+    Optional<PlannedSession> findOwnById(@Param("id") UUID id, @Param("athleteId") UUID athleteId);
+
     /** Calendrier d'un athlète : séances de ce coach seulement, triées par date, création, id. */
     @Query("""
             select new com.athletiq.planning.PlannedSessionRow(ps.id, ps.athlete.id, ps.scheduledDate, s.id, s.name,

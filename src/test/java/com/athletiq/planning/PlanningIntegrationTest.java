@@ -465,6 +465,52 @@ class PlanningIntegrationTest {
                 .andExpect(jsonPath("$.code").value("ATHLETE_NOT_FOUND"));
     }
 
+    @Test
+    void anAthleteReadsOnlyHisOwnSessionsAndOnlyWhileFollowedByACoach() throws Exception {
+        String sessionId = id(planForLucas(today));
+        planForLucas(today.plusDays(2));
+        String pastId = id(planForLucas(today));
+        jdbc.update("update planned_session set scheduled_date = ? where id = ?", today.minusDays(2), bytes(pastId));
+        String lucasToken = login("lucas.girard@athlete.fr");
+        String emmaToken = login("emma.lefevre@athlete.fr");
+
+        mockMvc.perform(get("/api/v1/me/planned-sessions/today").header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.today").value(today.toString()))
+                .andExpect(jsonPath("$.sessions.length()").value(1))
+                .andExpect(jsonPath("$.sessions[0].id").value(sessionId))
+                .andExpect(jsonPath("$.sessions[0].exerciseCount").value(2))
+                .andExpect(jsonPath("$.sessions[0].coachLastName").value("Petit"))
+                .andExpect(jsonPath("$.sessions[0].status").value("UPCOMING"));
+
+        mockMvc.perform(get("/api/v1/me/planned-sessions").header(HttpHeaders.AUTHORIZATION, lucasToken)
+                        .param("from", today.minusDays(7).toString()).param("to", today.plusDays(7).toString()))
+                .andExpect(jsonPath("$.sessions.length()").value(3))
+                .andExpect(jsonPath("$.sessions[0].id").value(pastId))
+                .andExpect(jsonPath("$.sessions[0].status").value("MISSED"));
+
+        mockMvc.perform(get("/api/v1/me/planned-sessions/" + sessionId).header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Haut du corps A"))
+                .andExpect(jsonPath("$.exercises.length()").value(2))
+                .andExpect(jsonPath("$.exercises[0].sets.length()").isNumber());
+
+        // Les séances de Lucas n'existent pas pour Emma, même avec le bon identifiant.
+        mockMvc.perform(get("/api/v1/me/planned-sessions/" + sessionId).header(HttpHeaders.AUTHORIZATION, emmaToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("PLANNED_SESSION_NOT_FOUND"));
+        mockMvc.perform(get("/api/v1/me/planned-sessions/today").header(HttpHeaders.AUTHORIZATION, emmaToken))
+                .andExpect(jsonPath("$.sessions.length()").value(0));
+
+        // US06 : sans coach, plus aucune lecture.
+        jdbc.update("update coach_athlete set ended_at = now(6) where athlete_id = ?", bytes(lucas.getId().toString()));
+        mockMvc.perform(get("/api/v1/me/planned-sessions/today").header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ATHLETE_WITHOUT_COACH"));
+        mockMvc.perform(get("/api/v1/me/planned-sessions/" + sessionId).header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(status().isForbidden());
+    }
+
     // ---------------------------------------------------------------- outils
 
     private void follow(User coach, User athlete) {

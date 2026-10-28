@@ -58,6 +58,17 @@ public class AccessGuard {
     }
 
     /**
+     * L'utilisateur courant doit être un athlète suivi par au moins un coach (US06) : sans coach, 403
+     * {@code ATHLETE_WITHOUT_COACH}. Le front l'applique aussi, mais c'est ici que la règle est garantie.
+     */
+    public void assertAthleteWithCoach() {
+        assertAthlete();
+        if (!athleteLinkService.hasActiveCoach(currentUser.id())) {
+            throw AthleteErrors.athleteWithoutCoach();
+        }
+    }
+
+    /**
      * L'utilisateur courant doit agir sur son propre compte (RM4). Un compte ne peut modifier que
      * son profil : l'identité vient du JWT, jamais d'un paramètre envoyé par le client.
      */

@@ -50,8 +50,8 @@ public class SecurityConfig {
                                 "/api/v1/athletes", "/api/v1/athletes/**",
                                 "/api/v1/groups", "/api/v1/groups/**",
                                 "/api/v1/planned-sessions/**").hasRole("COACH")
-                        // Coachs de l'athlète (saisie d'un code, consultation, départ) : à l'athlète uniquement.
-                        .requestMatchers("/api/v1/me/coaches", "/api/v1/me/coaches/**").hasRole("ATHLETE")
+                        // Espace de l'athlète connecté (coachs, séances, performances) : à l'athlète uniquement.
+                        .requestMatchers("/api/v1/me", "/api/v1/me/**").hasRole("ATHLETE")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter))
