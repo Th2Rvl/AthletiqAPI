@@ -353,6 +353,44 @@ class AthleteGroupIntegrationTest {
                 .andExpect(jsonPath("$.page.totalElements").value(2));
     }
 
+    @Test
+    void athleteCreatesAnAccountJoinsACoachAndLeavesIt() throws Exception {
+        coach("coach@club.fr");
+        String coachToken = login("coach@club.fr");
+        String body = mockMvc.perform(json(post("/api/v1/auth/register/athlete"), null,
+                        "{\"email\":\"Lea.Durand@mail.fr\",\"password\":\"" + PASSWORD
+                                + "\",\"firstName\":\"Léa\",\"lastName\":\"Durand\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.user.role").value("ATHLETE"))
+                .andReturn().getResponse().getContentAsString();
+        String token = "Bearer " + JsonPath.read(body, "$.accessToken");
+        mockMvc.perform(get("/api/v1/me/coaches").header(HttpHeaders.AUTHORIZATION, token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", empty()));
+
+        String code = createInvitation(coachToken, "Léa");
+        String linked = mockMvc.perform(json(post("/api/v1/me/coaches"), token, "{\"code\":\"" + code + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String coachId = JsonPath.read(linked, "$.coachId");
+        mockMvc.perform(get("/api/v1/me/coaches").header(HttpHeaders.AUTHORIZATION, token))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].coachId").value(coachId))
+                .andExpect(jsonPath("$[0].lastName").value("Petit"));
+        mockMvc.perform(get("/api/v1/me/coaches").header(HttpHeaders.AUTHORIZATION, coachToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(delete("/api/v1/me/coaches/" + coachId).header(HttpHeaders.AUTHORIZATION, token))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/me/coaches").header(HttpHeaders.AUTHORIZATION, token))
+                .andExpect(jsonPath("$", empty()));
+        mockMvc.perform(delete("/api/v1/me/coaches/" + coachId).header(HttpHeaders.AUTHORIZATION, token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("COACH_LINK_NOT_FOUND"));
+        mockMvc.perform(get("/api/v1/athletes").header(HttpHeaders.AUTHORIZATION, coachToken))
+                .andExpect(jsonPath("$.page.totalElements").value(0));
+    }
+
     // ---------------------------------------------------------------- outils
 
     private User coach(String email) {

@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 
 import com.athletiq.auth.dto.LoginRequest;
+import com.athletiq.auth.dto.RegisterAthleteRequest;
 import com.athletiq.auth.dto.RegisterCoachRequest;
 import com.athletiq.auth.dto.LoginResponse;
 import com.athletiq.common.exception.BusinessRuleException;
@@ -123,6 +124,34 @@ class AuthServiceTest {
                 new RegisterCoachRequest("claire.martin@club.fr", "motdepasse123", "Claire", "Martin")))
                 .isInstanceOf(BusinessRuleException.class)
                 .hasMessageContaining("existe déjà");
+        verify(userService, never()).create(anyString(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void createsAnAthleteAccountWithTheAthleteRoleAndConnectsIt() {
+        when(userService.create("lea.durand@mail.fr", "motdepasse123", "Léa", "Durand", Role.ATHLETE))
+                .thenReturn(user("lea.durand@mail.fr", Role.ATHLETE));
+        when(jwtTokenService.createAccessToken(any(UUID.class), eq(Role.ATHLETE))).thenReturn("jwt");
+        when(jwtTokenService.accessTokenTtlSeconds()).thenReturn(900L);
+
+        LoginResponse response = authService.registerAthlete(
+                new RegisterAthleteRequest(" Lea.Durand@Mail.FR ", "motdepasse123", " Léa ", " Durand "));
+
+        assertThat(response.accessToken()).isEqualTo("jwt");
+        assertThat(response.user().role()).isEqualTo(Role.ATHLETE);
+        verify(userService).create("lea.durand@mail.fr", "motdepasse123", "Léa", "Durand", Role.ATHLETE);
+    }
+
+    @Test
+    void refusesAnAthleteAccountWithAWeakPasswordOrAnUsedEmail() {
+        assertThatThrownBy(() -> authService.registerAthlete(
+                new RegisterAthleteRequest("lea.durand@mail.fr", "court", "Léa", "Durand")))
+                .isInstanceOf(InvalidFieldException.class);
+
+        when(userService.existsByEmail("lea.durand@mail.fr")).thenReturn(true);
+        assertThatThrownBy(() -> authService.registerAthlete(
+                new RegisterAthleteRequest("lea.durand@mail.fr", "motdepasse123", "Léa", "Durand")))
+                .isInstanceOf(BusinessRuleException.class);
         verify(userService, never()).create(anyString(), anyString(), anyString(), anyString(), any());
     }
 }

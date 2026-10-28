@@ -2,6 +2,7 @@ package com.athletiq.auth;
 
 import com.athletiq.auth.dto.LoginRequest;
 import com.athletiq.auth.dto.LoginResponse;
+import com.athletiq.auth.dto.RegisterAthleteRequest;
 import com.athletiq.auth.dto.RegisterCoachRequest;
 import com.athletiq.common.exception.InvalidCredentialsException;
 import com.athletiq.common.security.JwtTokenService;
@@ -63,14 +64,30 @@ public class AuthService {
      */
     @Transactional
     public LoginResponse register(RegisterCoachRequest request) {
-        if (!PasswordPolicy.isValid(request.password())) {
+        return createAccount(request.email(), request.password(), request.firstName(), request.lastName(),
+                Role.COACH);
+    }
+
+    /**
+     * Crée un compte athlète (#8, US01) et le connecte immédiatement. Même règle que pour le coach :
+     * le rôle est fixé par l'API, jamais lu dans la requête (RM3). L'athlète n'a aucun coach à la
+     * création : il devra saisir un code d'invitation pour utiliser l'application.
+     */
+    @Transactional
+    public LoginResponse registerAthlete(RegisterAthleteRequest request) {
+        return createAccount(request.email(), request.password(), request.firstName(), request.lastName(),
+                Role.ATHLETE);
+    }
+
+    private LoginResponse createAccount(String email, String password, String firstName, String lastName,
+                                        Role role) {
+        if (!PasswordPolicy.isValid(password)) {
             throw AuthErrors.passwordRuleViolation();
         }
-        if (userService.existsByEmail(request.email())) {
+        if (userService.existsByEmail(email)) {
             throw UserErrors.emailAlreadyExists();
         }
-        User created = userService.create(request.email(), request.password(), request.firstName(),
-                request.lastName(), Role.COACH);
+        User created = userService.create(email, password, firstName, lastName, role);
         String token = jwtTokenService.createAccessToken(created.getId(), created.getRole());
         return LoginResponse.bearer(token, jwtTokenService.accessTokenTtlSeconds(),
                 userMapper.toResponse(created));

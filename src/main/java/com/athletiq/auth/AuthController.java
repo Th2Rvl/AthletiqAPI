@@ -4,6 +4,7 @@ import com.athletiq.auth.dto.ForgotPasswordRequest;
 import com.athletiq.auth.dto.ForgotPasswordResponse;
 import com.athletiq.auth.dto.LoginRequest;
 import com.athletiq.auth.dto.LoginResponse;
+import com.athletiq.auth.dto.RegisterAthleteRequest;
 import com.athletiq.auth.dto.RegisterCoachRequest;
 import com.athletiq.auth.dto.ResetPasswordRequest;
 import jakarta.validation.Valid;
@@ -37,6 +38,17 @@ public class AuthController {
         LoginResponse response = authService.register(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .location(URI.create("/api/v1/profile"))
+                .body(response);
+    }
+
+    /**
+     * Création d'un compte athlète depuis l'app mobile (#8, US01). Le compte créé est connecté.
+     */
+    @PostMapping("/register/athlete")
+    public ResponseEntity<LoginResponse> registerAthlete(@Valid @RequestBody RegisterAthleteRequest request) {
+        LoginResponse response = authService.registerAthlete(request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .location(URI.create("/api/v1/me/coaches"))
                 .body(response);
     }
 

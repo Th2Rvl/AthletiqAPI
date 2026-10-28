@@ -65,6 +65,8 @@ class AthleteControllerTest {
     private AthleteService athleteService;
     @MockitoBean
     private InvitationService invitationService;
+    @MockitoBean
+    private MyCoachesService myCoachesService;
 
     // ---------------------------------------------------------------- sécurité
 
@@ -260,5 +262,57 @@ class AthleteControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"K7QH3MPA\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("ATHLETE_ALREADY_LINKED"));
+    }
+
+    // ---------------------------------------------------------------- GET et DELETE /me/coaches
+
+    @Test
+    void myCoachesEndpointsRefuseAnonymousCoachAndAdmin() throws Exception {
+        for (String uri : List.of("/api/v1/me/coaches", "/api/v1/me/coaches/" + ID)) {
+            HttpMethod method = uri.endsWith(ID.toString()) ? HttpMethod.DELETE : HttpMethod.GET;
+            mockMvc.perform(request(method, uri)).andExpect(status().isUnauthorized());
+            for (Role role : List.of(Role.COACH, Role.ADMIN)) {
+                mockMvc.perform(request(method, uri).with(as(role)))
+                        .andExpect(status().isForbidden())
+                        .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+            }
+        }
+        verifyNoInteractions(myCoachesService);
+    }
+
+    @Test
+    void listsMyCoaches() throws Exception {
+        when(myCoachesService.list()).thenReturn(List.of(new CoachLinkResponse(ID, "Nicolas", "Petit", NOW)));
+
+        mockMvc.perform(get("/api/v1/me/coaches").with(as(Role.ATHLETE)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].coachId").value(ID.toString()))
+                .andExpect(jsonPath("$[0].firstName").value("Nicolas"));
+    }
+
+    @Test
+    void listsNoCoachForAnAthleteWithoutCoach() throws Exception {
+        when(myCoachesService.list()).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/me/coaches").with(as(Role.ATHLETE)))
+                .andExpect(status().isOk())
+                .andExpect(content().json("[]"));
+    }
+
+    @Test
+    void leavesACoach() throws Exception {
+        mockMvc.perform(delete("/api/v1/me/coaches/" + ID).with(as(Role.ATHLETE)))
+                .andExpect(status().isNoContent());
+
+        verify(myCoachesService).leave(ID);
+    }
+
+    @Test
+    void leavingAnUnknownCoachIsA404() throws Exception {
+        doThrow(AthleteErrors.coachLinkNotFound()).when(myCoachesService).leave(ID);
+
+        mockMvc.perform(delete("/api/v1/me/coaches/" + ID).with(as(Role.ATHLETE)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("COACH_LINK_NOT_FOUND"));
     }
 }

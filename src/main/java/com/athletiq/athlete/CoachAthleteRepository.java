@@ -1,6 +1,7 @@
 package com.athletiq.athlete;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -12,6 +13,15 @@ import org.springframework.data.repository.query.Param;
 public interface CoachAthleteRepository extends JpaRepository<CoachAthlete, UUID> {
 
     boolean existsByCoachIdAndAthleteIdAndEndedAtIsNull(UUID coachId, UUID athleteId);
+
+    /** Coachs qui suivent activement cet athlète, du plus ancien lien au plus récent. */
+    @Query("""
+            select l from CoachAthlete l
+            join fetch l.coach
+            where l.athlete.id = :athleteId and l.endedAt is null
+            order by l.joinedAt asc, l.id asc
+            """)
+    List<CoachAthlete> findActiveByAthleteId(@Param("athleteId") UUID athleteId);
 
     Optional<CoachAthlete> findByCoachIdAndAthleteIdAndEndedAtIsNull(UUID coachId, UUID athleteId);
 
