@@ -41,6 +41,12 @@ public class AthleteLinkService {
         return linkRepository.existsByCoachIdAndAthleteIdAndEndedAtIsNull(coachId, athleteId);
     }
 
+    /** Vrai si au moins un coach suit activement cet athlète (US06 : sans coach, pas d'accès aux données). */
+    @Transactional(readOnly = true)
+    public boolean hasActiveCoach(UUID athleteId) {
+        return linkRepository.existsByAthleteIdAndEndedAtIsNull(athleteId);
+    }
+
     /** Vrai si ce coach suit activement chacun de ces athlètes (une seule requête de comptage). */
     @Transactional(readOnly = true)
     public boolean followsAll(UUID coachId, Collection<UUID> athleteIds) {

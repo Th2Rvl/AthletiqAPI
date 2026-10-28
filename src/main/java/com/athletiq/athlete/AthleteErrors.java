@@ -1,6 +1,7 @@
 package com.athletiq.athlete;
 
 import com.athletiq.common.exception.BusinessRuleException;
+import com.athletiq.common.exception.ForbiddenActionException;
 import com.athletiq.common.exception.InvalidFieldException;
 import com.athletiq.common.exception.ResourceNotFoundException;
 
@@ -14,6 +15,7 @@ public final class AthleteErrors {
     public static final String ATHLETE_ALREADY_LINKED = "ATHLETE_ALREADY_LINKED";
     public static final String INVITATION_NOT_FOUND = "INVITATION_NOT_FOUND";
     public static final String ATHLETE_NOT_FOUND = "ATHLETE_NOT_FOUND";
+    public static final String ATHLETE_WITHOUT_COACH = "ATHLETE_WITHOUT_COACH";
     public static final String COACH_LINK_NOT_FOUND = "COACH_LINK_NOT_FOUND";
 
     private AthleteErrors() {
@@ -40,5 +42,10 @@ public final class AthleteErrors {
     /** Coach inconnu, déjà quitté ou qui ne suit pas cet athlète : 404, sans dire lequel. */
     public static ResourceNotFoundException coachLinkNotFound() {
         return new ResourceNotFoundException(COACH_LINK_NOT_FOUND, "Vous ne suivez plus ce coach");
+    }
+
+    /** US06 : un athlète sans coach ne peut pas lire de séance, il doit d'abord rejoindre un coach. */
+    public static ForbiddenActionException athleteWithoutCoach() {
+        return new ForbiddenActionException(ATHLETE_WITHOUT_COACH, "Rejoignez un coach pour accéder à vos séances");
     }
 }

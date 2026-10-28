@@ -13,6 +13,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface CoachAthleteRepository extends JpaRepository<CoachAthlete, UUID> {
 
+    boolean existsByAthleteIdAndEndedAtIsNull(UUID athleteId);
+
     boolean existsByCoachIdAndAthleteIdAndEndedAtIsNull(UUID coachId, UUID athleteId);
 
     /** Coachs qui suivent activement cet athlète, du plus ancien lien au plus récent. */
