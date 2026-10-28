@@ -35,7 +35,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // Parcours publics : créer un compte, se connecter, réinitialiser son mot de passe.
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/register",
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/register/athlete",
                                 "/api/v1/auth/password/forgot", "/api/v1/auth/password/reset").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
@@ -49,10 +49,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/invitations", "/api/v1/invitations/**",
                                 "/api/v1/athletes", "/api/v1/athletes/**",
                                 "/api/v1/groups", "/api/v1/groups/**",
-                                "/api/v1/planned-sessions/**",
-                                "/api/v1/dashboard/**").hasRole("COACH")
-                        // Saisie d'un code d'invitation : à l'athlète uniquement.
-                        .requestMatchers(HttpMethod.POST, "/api/v1/me/coaches").hasRole("ATHLETE")
+                                "/api/v1/planned-sessions/**").hasRole("COACH")
+                        // Coachs de l'athlète (saisie d'un code, consultation, départ) : à l'athlète uniquement.
+                        .requestMatchers("/api/v1/me/coaches", "/api/v1/me/coaches/**").hasRole("ATHLETE")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter))

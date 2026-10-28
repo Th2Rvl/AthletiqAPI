@@ -11,6 +11,7 @@ import com.athletiq.auth.dto.ForgotPasswordRequest;
 import com.athletiq.auth.dto.ForgotPasswordResponse;
 import com.athletiq.auth.dto.LoginRequest;
 import com.athletiq.auth.dto.LoginResponse;
+import com.athletiq.auth.dto.RegisterAthleteRequest;
 import com.athletiq.auth.dto.RegisterCoachRequest;
 import com.athletiq.common.exception.InvalidCredentialsException;
 import com.athletiq.common.exception.InvalidFieldException;
@@ -34,6 +35,7 @@ class AuthControllerTest {
 
     private static final String LOGIN = "/api/v1/auth/login";
     private static final String REGISTER = "/api/v1/auth/register";
+    private static final String REGISTER_ATHLETE = "/api/v1/auth/register/athlete";
     private static final String FORGOT = "/api/v1/auth/password/forgot";
     private static final String RESET = "/api/v1/auth/password/reset";
 
@@ -98,6 +100,30 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.accessToken").value("jwt"))
                 .andExpect(jsonPath("$.user.role").value("COACH"))
                 .andExpect(jsonPath("$.user.passwordHash").doesNotExist());
+    }
+
+    @Test
+    void registersAnAthleteWithoutTokenAndConnectsIt() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(authService.registerAthlete(any(RegisterAthleteRequest.class))).thenReturn(LoginResponse.bearer("jwt", 900,
+                new UserResponse(id, "lea.durand@mail.fr", "Léa", "Durand", Role.ATHLETE)));
+
+        mockMvc.perform(post(REGISTER_ATHLETE).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"lea.durand@mail.fr\",\"password\":\"motdepasse123\","
+                                + "\"firstName\":\"Léa\",\"lastName\":\"Durand\",\"role\":\"ADMIN\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.accessToken").value("jwt"))
+                .andExpect(jsonPath("$.user.role").value("ATHLETE"))
+                .andExpect(jsonPath("$.user.passwordHash").doesNotExist());
+    }
+
+    @Test
+    void validatesTheAthleteRegistration() throws Exception {
+        mockMvc.perform(post(REGISTER_ATHLETE).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"pas-un-email\",\"password\":\"court\",\"firstName\":\"\",\"lastName\":\"Durand\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        verifyNoInteractions(authService);
     }
 
     @Test

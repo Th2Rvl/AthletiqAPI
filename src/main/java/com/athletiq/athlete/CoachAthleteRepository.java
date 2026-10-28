@@ -15,6 +15,15 @@ public interface CoachAthleteRepository extends JpaRepository<CoachAthlete, UUID
 
     boolean existsByCoachIdAndAthleteIdAndEndedAtIsNull(UUID coachId, UUID athleteId);
 
+    /** Coachs qui suivent activement cet athlète, du plus ancien lien au plus récent. */
+    @Query("""
+            select l from CoachAthlete l
+            join fetch l.coach
+            where l.athlete.id = :athleteId and l.endedAt is null
+            order by l.joinedAt asc, l.id asc
+            """)
+    List<CoachAthlete> findActiveByAthleteId(@Param("athleteId") UUID athleteId);
+
     Optional<CoachAthlete> findByCoachIdAndAthleteIdAndEndedAtIsNull(UUID coachId, UUID athleteId);
 
     /** Nombre d'athlètes de la liste suivis activement par ce coach : une seule requête pour tout un lot. */

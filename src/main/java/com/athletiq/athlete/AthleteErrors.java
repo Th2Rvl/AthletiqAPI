@@ -14,6 +14,7 @@ public final class AthleteErrors {
     public static final String ATHLETE_ALREADY_LINKED = "ATHLETE_ALREADY_LINKED";
     public static final String INVITATION_NOT_FOUND = "INVITATION_NOT_FOUND";
     public static final String ATHLETE_NOT_FOUND = "ATHLETE_NOT_FOUND";
+    public static final String COACH_LINK_NOT_FOUND = "COACH_LINK_NOT_FOUND";
 
     private AthleteErrors() {
     }
@@ -34,5 +35,10 @@ public final class AthleteErrors {
     /** Athlète non suivi, déjà retiré ou suivi par un autre coach : 404, sans dire lequel (RM4). */
     public static ResourceNotFoundException athleteNotFound() {
         return new ResourceNotFoundException(ATHLETE_NOT_FOUND, "Cet athlète n'est plus suivi");
+    }
+
+    /** Coach inconnu, déjà quitté ou qui ne suit pas cet athlète : 404, sans dire lequel. */
+    public static ResourceNotFoundException coachLinkNotFound() {
+        return new ResourceNotFoundException(COACH_LINK_NOT_FOUND, "Vous ne suivez plus ce coach");
     }
 }
