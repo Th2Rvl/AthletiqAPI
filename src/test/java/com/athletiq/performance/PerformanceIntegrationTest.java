@@ -470,6 +470,91 @@ class PerformanceIntegrationTest {
         return null;
     }
 
+    @Test
+    void anAthleteEntersDraftsValidatesAndCorrectsASessionAndTheCoachOnlyReadsTheValidatedOne() throws Exception {
+        String sessionId = plan(coachToken, lucas, strength, today);
+        String lucasToken = login("lucas.girard@athlete.fr");
+        String emmaToken = login("emma.lefevre@athlete.fr");
+        String own = "/api/v1/me/planned-sessions/" + sessionId;
+        String detail = mockMvc.perform(get(own).header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String firstSet = JsonPath.read(detail, "$.exercises[0].sets[0].id");
+        String secondSet = JsonPath.read(detail, "$.exercises[0].sets[1].id");
+
+        mockMvc.perform(get(own + "/performance").header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").doesNotExist());
+
+        // Brouillon : invisible du coach, la séance reste à venir.
+        mockMvc.perform(json(put(own + "/performance"), lucasToken, "{\"sets\":["
+                        + "{\"snapshotSetId\":\"" + firstSet + "\",\"reps\":8,\"loadKg\":62.5}],\"rpe\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DRAFT"))
+                .andExpect(jsonPath("$.validatedAt").doesNotExist());
+        assertThat(JsonPath.<String>read(review(coachToken, sessionId), "$.status")).isEqualTo("UPCOMING");
+        mockMvc.perform(get(own).header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(jsonPath("$.status").value("UPCOMING"));
+
+        // Une séance sans aucune série faite ne se valide pas, et rien n'est enregistré par la tentative.
+        mockMvc.perform(json(post(own + "/performance/validate"), lucasToken,
+                        "{\"sets\":[{\"snapshotSetId\":\"" + firstSet + "\",\"reps\":null}],\"rpe\":7}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PERFORMANCE_EMPTY"));
+        mockMvc.perform(get(own + "/performance").header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(jsonPath("$.sets[0].reps").value(8));
+
+        // Validation : la séance est réalisée, verrouillée, et le coach lit le réalisé et le ressenti.
+        mockMvc.perform(json(post(own + "/performance/validate"), lucasToken, "{\"sets\":["
+                        + "{\"snapshotSetId\":\"" + firstSet + "\",\"reps\":8,\"loadKg\":62.5},"
+                        + "{\"snapshotSetId\":\"" + secondSet + "\",\"reps\":7,\"loadKg\":60}],"
+                        + "\"rpe\":8,\"fatigue\":3,\"comment\":\"  Dernière série lourde  \"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("VALIDATED"))
+                .andExpect(jsonPath("$.correctedAt").doesNotExist());
+        mockMvc.perform(get(own).header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(jsonPath("$.status").value("DONE"));
+        String review = review(coachToken, sessionId);
+        assertThat(JsonPath.<String>read(review, "$.status")).isEqualTo("DONE");
+        assertThat(JsonPath.<Integer>read(review, "$.feedback.rpe")).isEqualTo(8);
+        assertThat(JsonPath.<String>read(review, "$.feedback.comment")).isEqualTo("Dernière série lourde");
+        assertThat(JsonPath.<Integer>read(review, "$.exercises[0].sets[1].performedReps")).isEqualTo(7);
+        assertThat(JsonPath.<Boolean>read(calendar(lucas, today), "$.sessions[0].locked")).isTrue();
+
+        // Correction (US14) : reste validée, correctedAt daté, le coach lit les valeurs corrigées.
+        mockMvc.perform(json(put(own + "/performance"), lucasToken, "{\"sets\":["
+                        + "{\"snapshotSetId\":\"" + firstSet + "\",\"reps\":9,\"loadKg\":62.5}],\"rpe\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("VALIDATED"))
+                .andExpect(jsonPath("$.correctedAt").exists())
+                .andExpect(jsonPath("$.sets.length()").value(1));
+        review = review(coachToken, sessionId);
+        assertThat(JsonPath.<Integer>read(review, "$.exercises[0].sets[0].performedReps")).isEqualTo(9);
+        assertThat(JsonPath.<Object>read(review, "$.exercises[0].sets[1].performedReps")).isNull();
+        assertThat(JsonPath.<String>read(review, "$.feedback.correctedAt")).isNotNull();
+        assertThat(count("session_performance")).isEqualTo(1);
+        assertThat(count("performed_set")).isEqualTo(1);
+
+        // Isolement et validation des séries.
+        mockMvc.perform(get(own + "/performance").header(HttpHeaders.AUTHORIZATION, emmaToken))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("PLANNED_SESSION_NOT_FOUND"));
+        mockMvc.perform(json(put(own + "/performance"), emmaToken, "{\"sets\":[]}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(json(put(own + "/performance"), lucasToken, "{\"sets\":["
+                        + "{\"snapshotSetId\":\"" + UUID.randomUUID() + "\",\"reps\":8}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("PERFORMED_SET_UNKNOWN"));
+        mockMvc.perform(json(put(own + "/performance"), lucasToken, "{\"sets\":["
+                        + "{\"snapshotSetId\":\"" + firstSet + "\",\"reps\":8},"
+                        + "{\"snapshotSetId\":\"" + firstSet + "\",\"reps\":7}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("PERFORMED_SET_DUPLICATE"));
+
+        // US06 : sans coach actif, plus aucune saisie.
+        jdbc.update("update coach_athlete set ended_at = now(6) where athlete_id = ?", bytes(lucas.getId()));
+        mockMvc.perform(get(own + "/performance").header(HttpHeaders.AUTHORIZATION, lucasToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ATHLETE_WITHOUT_COACH"));
+    }
+
     private UUID validate(String plannedSessionId, User athlete, Integer rpe, Integer fatigue, String comment,
                           Done... sets) {
         return perform(plannedSessionId, athlete, "VALIDATED", rpe, fatigue, comment, VALIDATED_AT, null, sets);
