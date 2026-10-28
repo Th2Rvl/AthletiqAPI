@@ -129,6 +129,16 @@ class AthletePerformanceServiceTest {
     }
 
     @Test
+    void datesAreTruncatedToTheMicrosecondLikeTheDatabaseColumn() {
+        service = new AthletePerformanceService(repository, userService, accessGuard, currentUser,
+                Clock.fixed(Instant.parse("2026-10-28T10:00:00.123456789Z"), ZoneOffset.UTC));
+
+        AthletePerformanceResponse response = service.validate(planned.getId(), request(8, null, null, null));
+
+        assertThat(response.validatedAt()).isEqualTo(Instant.parse("2026-10-28T10:00:00.123456Z"));
+    }
+
+    @Test
     void refusesToValidateASessionWithNothingDoneAndSavesNothing() {
         assertThatThrownBy(() -> service.validate(planned.getId(), request(null, null, 7, null)))
                 .isInstanceOf(BusinessRuleException.class)

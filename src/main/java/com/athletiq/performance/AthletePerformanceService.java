@@ -13,6 +13,7 @@ import com.athletiq.user.UserService;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -83,7 +84,8 @@ public class AthletePerformanceService {
             throw PerformanceErrors.performanceEmpty();
         }
 
-        Instant now = clock.instant();
+        // DATETIME(6) en base : tronquer ici évite de renvoyer une date que la relecture ne retrouverait pas.
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         SessionPerformance performance = performanceRepository.findOwnWithSets(plannedSessionId, athleteId)
                 .orElseGet(() -> SessionPerformance.builder()
                         .plannedSession(plannedSession)
