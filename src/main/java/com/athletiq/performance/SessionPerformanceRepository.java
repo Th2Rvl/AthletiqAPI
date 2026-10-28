@@ -1,5 +1,7 @@
 package com.athletiq.performance;
 
+import com.athletiq.planning.PlannedSession;
+import com.athletiq.planning.SessionSnapshotSet;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
@@ -27,6 +29,33 @@ public interface SessionPerformanceRepository extends JpaRepository<SessionPerfo
               and sp.status = com.athletiq.performance.PerformanceStatus.VALIDATED
             """)
     List<UUID> findValidatedPlannedSessionIds(@Param("plannedSessionIds") Collection<UUID> plannedSessionIds);
+
+    /** Écriture par l'athlète (#10) : sa réalisation de cette séance, avec ses séries réalisées. */
+    @Query("""
+            select sp from SessionPerformance sp
+            left join fetch sp.sets
+            where sp.plannedSession.id = :plannedSessionId and sp.athlete.id = :athleteId
+            """)
+    Optional<SessionPerformance> findOwnWithSets(@Param("plannedSessionId") UUID plannedSessionId,
+                                                 @Param("athleteId") UUID athleteId);
+
+    /** Une séance planifiée de cet athlète, avec son instantané, ou rien si elle n'est pas à lui. */
+    @Query("""
+            select ps from PlannedSession ps
+            join fetch ps.snapshot
+            where ps.id = :plannedSessionId and ps.athlete.id = :athleteId
+            """)
+    Optional<PlannedSession> findOwnPlannedSession(@Param("plannedSessionId") UUID plannedSessionId,
+                                                   @Param("athleteId") UUID athleteId);
+
+    /** Les séries prévues de l'instantané de cette séance : les seules sur lesquelles l'athlète peut saisir. */
+    @Query("""
+            select st from SessionSnapshotSet st
+            join st.snapshotExercise e
+            join PlannedSession ps on ps.snapshot = e.snapshot
+            where ps.id = :plannedSessionId
+            """)
+    List<SessionSnapshotSet> findPlannedSets(@Param("plannedSessionId") UUID plannedSessionId);
 
     /** Données de démonstration (profil dev) : ce coach a-t-il déjà des réalisations sur ses séances ? */
     boolean existsByPlannedSessionCoachId(UUID coachId);
